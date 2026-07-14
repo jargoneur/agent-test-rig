@@ -55,7 +55,7 @@ class SimpleAgent:
         if name == "finish":
             return {"type": "finished", "reason": action.get("reason", "")}
 
-        return {"type": "error", "message": f"Unknown action: {name}"}
+        raise ValueError(f"Unknown action: {name}")
 
     @staticmethod
     def action_signature(action):
@@ -74,8 +74,10 @@ class SimpleAgent:
         state = self.scaffold.init_state(issue, self.tools)
         termination_reason = "max_steps"
         agent_self_verified = False
-        repeated_actions = 0
-        previous_signature = None
+        repeated_valid_actions = 0
+        parse_errors = 0
+        execution_errors = 0
+        previous_valid_signature = None
 
         self.logger.log("run_started", {
             "issue": issue,
@@ -89,17 +91,26 @@ class SimpleAgent:
 
             self.logger.log("model_response", {"step": step, "response": response})
 
+            parsed_successfully = False
             try:
                 action = self.parse_action(response)
-                observation = self.execute_action(action)
+                parsed_successfully = True
             except Exception as error:
-                action = {"action": "parse_or_execution_error"}
-                observation = {"type": "error", "message": str(error)}
+                parse_errors += 1
+                action = {"action": "parse_error"}
+                observation = {"type": "parse_error", "message": str(error)}
 
-            signature = self.action_signature(action)
-            if signature == previous_signature:
-                repeated_actions += 1
-            previous_signature = signature
+            if parsed_successfully:
+                signature = self.action_signature(action)
+                if signature == previous_valid_signature:
+                    repeated_valid_actions += 1
+                previous_valid_signature = signature
+
+                try:
+                    observation = self.execute_action(action)
+                except Exception as error:
+                    execution_errors += 1
+                    observation = {"type": "execution_error", "message": str(error)}
 
             state = self.scaffold.update_state(state, action, observation)
             history.append({"step": step, "action": action, "observation": observation})
@@ -109,7 +120,9 @@ class SimpleAgent:
                 "action": action,
                 "observation": observation,
                 "scaffold_state": self.scaffold.export_state(state),
-                "repeated_actions": repeated_actions,
+                "parse_errors": parse_errors,
+                "execution_errors": execution_errors,
+                "repeated_valid_actions": repeated_valid_actions,
             })
 
             if observation.get("type") == "finished":
@@ -128,7 +141,9 @@ class SimpleAgent:
             "final_tests_passed": final_tests["passed"],
             "agent_self_verified": agent_self_verified,
             "termination_reason": termination_reason,
-            "repeated_actions": repeated_actions,
+            "parse_errors": parse_errors,
+            "execution_errors": execution_errors,
+            "repeated_valid_actions": repeated_valid_actions,
             "stdout": final_tests["stdout"][-4000:],
             "stderr": final_tests["stderr"][-4000:],
         })
@@ -138,7 +153,9 @@ class SimpleAgent:
             "final_tests_passed": final_tests["passed"],
             "agent_self_verified": agent_self_verified,
             "termination_reason": termination_reason,
-            "repeated_actions": repeated_actions,
+            "parse_errors": parse_errors,
+            "execution_errors": execution_errors,
+            "repeated_valid_actions": repeated_valid_actions,
             "steps": len(history),
             "history": history,
             "scaffold_state": self.scaffold.export_state(state),
