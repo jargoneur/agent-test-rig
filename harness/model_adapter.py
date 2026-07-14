@@ -19,7 +19,7 @@ class OllamaModel:
             }
         }
 
-        response = requests.post(url, json=payload, timeout=180)
+        response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
 
         return response.json()["response"]
