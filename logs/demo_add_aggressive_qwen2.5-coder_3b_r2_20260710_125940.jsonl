@@ -1,0 +1,1 @@
+{"timestamp": "2026-07-10T10:59:40.605932", "event_type": "run_started", "data": {"issue": "The test for add(2, 3) fails.\n\nFix the implementation so that add(a, b) returns the sum of a and b.\n\nDo not change the test.", "max_steps": 8, "scaffold": "AggressiveScaffold"}}

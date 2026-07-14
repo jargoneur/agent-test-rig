@@ -1,0 +1,10 @@
+id: demo_add
+repo_path: repos/demo_repo
+issue_file: issue.md
+test_command: pytest
+
+expected_files:
+  - src/calculator.py
+
+retention_facts:
+  - add(a, b) must return the sum, not the difference.
