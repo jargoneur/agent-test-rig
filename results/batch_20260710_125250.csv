@@ -1,7 +1,0 @@
-task,model,scaffold,repeat,success,steps,files_read,files_written,agent_tests_run,agent_last_test_passed,strategy,log_path,error
-demo_add,qwen2.5-coder:3b,baseline,1,True,2,[],"[""src/calculator.py""]",1,True,,logs/demo_add_baseline_qwen2.5-coder_3b_r1_20260710_125250.jsonl,
-demo_add,qwen2.5-coder:3b,baseline,2,True,3,[],"[""src/calculator.py""]",1,True,,logs/demo_add_baseline_qwen2.5-coder_3b_r2_20260710_125354.jsonl,
-demo_add,qwen2.5-coder:3b,aggressive,1,False,,[],[],,,,,"HTTPConnectionPool(host='172.30.192.1', port=11434): Read timed out. (read timeout=180)"
-demo_add,qwen2.5-coder:3b,aggressive,2,False,,[],[],,,,,"HTTPConnectionPool(host='172.30.192.1', port=11434): Read timed out. (read timeout=180)"
-demo_add,qwen2.5-coder:3b,test_first,1,False,,[],[],,,,,"HTTPConnectionPool(host='172.30.192.1', port=11434): Read timed out. (read timeout=180)"
-demo_add,qwen2.5-coder:3b,test_first,2,False,,[],[],,,,,"HTTPConnectionPool(host='172.30.192.1', port=11434): Read timed out. (read timeout=180)"
