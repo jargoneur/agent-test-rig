@@ -3,6 +3,8 @@ import json
 import re
 from pathlib import Path
 
+from harness.reproducibility import derive_step_seed, sha256_text
+
 
 class SimpleAgent:
     def __init__(
@@ -13,6 +15,7 @@ class SimpleAgent:
         scaffold,
         max_steps=8,
         expected_files=None,
+        run_seed=None,
     ):
         self.model = model
         self.tools = tools
@@ -20,6 +23,7 @@ class SimpleAgent:
         self.scaffold = scaffold
         self.max_steps = max_steps
         self.expected_files = set(expected_files or [])
+        self.run_seed = run_seed
         self.files_read = set()
 
     def parse_action(self, response):
@@ -128,18 +132,51 @@ class SimpleAgent:
         target_file_written = False
         previous_valid_signature = None
 
-        self.logger.log("run_started", {
-            "issue": issue,
-            "max_steps": self.max_steps,
-            "scaffold": self.scaffold.__class__.__name__,
-            "expected_files": sorted(self.expected_files),
-        })
+        self.logger.log(
+            "run_started",
+            {
+                "issue": issue,
+                "max_steps": self.max_steps,
+                "scaffold": self.scaffold.__class__.__name__,
+                "expected_files": sorted(self.expected_files),
+                "run_seed": self.run_seed,
+                "model": getattr(self.model, "model_name", None),
+                "generation_options": getattr(self.model, "options", {}),
+            },
+        )
 
         for step in range(1, self.max_steps + 1):
             context = self.scaffold.build_context(issue, self.tools, history, state)
-            response = self.model.generate(context)
+            step_seed = (
+                derive_step_seed(self.run_seed, step)
+                if self.run_seed is not None
+                else None
+            )
+            effective_options = self.model.effective_options(step_seed)
 
-            self.logger.log("model_response", {"step": step, "response": response})
+            self.logger.log(
+                "prompt_built",
+                {
+                    "step": step,
+                    "prompt": context,
+                    "prompt_sha256": sha256_text(context),
+                    "prompt_characters": len(context),
+                    "step_seed": step_seed,
+                    "generation_options": effective_options,
+                },
+            )
+
+            response = self.model.generate(context, seed=step_seed)
+
+            self.logger.log(
+                "model_response",
+                {
+                    "step": step,
+                    "response": response,
+                    "step_seed": step_seed,
+                    "generation_metadata": self.model.last_generation_metadata,
+                },
+            )
 
             parsed_successfully = False
             try:
@@ -205,19 +242,23 @@ class SimpleAgent:
             state = self.scaffold.update_state(state, action, observation)
             history.append({"step": step, "action": action, "observation": observation})
 
-            self.logger.log("step_finished", {
-                "step": step,
-                "action": action,
-                "observation": observation,
-                "scaffold_state": self.scaffold.export_state(state),
-                "parse_errors": parse_errors,
-                "execution_errors": execution_errors,
-                "repeated_valid_actions": repeated_valid_actions,
-                "write_blocks": write_blocks,
-                "wrote_unread_file_attempts": wrote_unread_file_attempts,
-                "invalid_python_writes": invalid_python_writes,
-                "maximum_repeated_action_streak": maximum_repeated_action_streak,
-            })
+            self.logger.log(
+                "step_finished",
+                {
+                    "step": step,
+                    "step_seed": step_seed,
+                    "action": action,
+                    "observation": observation,
+                    "scaffold_state": self.scaffold.export_state(state),
+                    "parse_errors": parse_errors,
+                    "execution_errors": execution_errors,
+                    "repeated_valid_actions": repeated_valid_actions,
+                    "write_blocks": write_blocks,
+                    "wrote_unread_file_attempts": wrote_unread_file_attempts,
+                    "invalid_python_writes": invalid_python_writes,
+                    "maximum_repeated_action_streak": maximum_repeated_action_streak,
+                },
+            )
 
             if observation.get("type") == "finished":
                 termination_reason = "agent_finish"
@@ -242,17 +283,21 @@ class SimpleAgent:
             "maximum_repeated_action_streak": maximum_repeated_action_streak,
         }
 
-        self.logger.log("run_finished", {
-            "final_tests_passed": final_tests["passed"],
-            "agent_self_verified": agent_self_verified,
-            "termination_reason": termination_reason,
-            "parse_errors": parse_errors,
-            "execution_errors": execution_errors,
-            "repeated_valid_actions": repeated_valid_actions,
-            **diagnostics,
-            "stdout": final_tests["stdout"][-4000:],
-            "stderr": final_tests["stderr"][-4000:],
-        })
+        self.logger.log(
+            "run_finished",
+            {
+                "run_seed": self.run_seed,
+                "final_tests_passed": final_tests["passed"],
+                "agent_self_verified": agent_self_verified,
+                "termination_reason": termination_reason,
+                "parse_errors": parse_errors,
+                "execution_errors": execution_errors,
+                "repeated_valid_actions": repeated_valid_actions,
+                **diagnostics,
+                "stdout": final_tests["stdout"][-4000:],
+                "stderr": final_tests["stderr"][-4000:],
+            },
+        )
 
         return {
             "tests_passed": final_tests["passed"],
@@ -262,6 +307,7 @@ class SimpleAgent:
             "parse_errors": parse_errors,
             "execution_errors": execution_errors,
             "repeated_valid_actions": repeated_valid_actions,
+            "run_seed": self.run_seed,
             **diagnostics,
             "steps": len(history),
             "history": history,
