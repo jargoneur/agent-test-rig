@@ -1,0 +1,11 @@
+id: file_discovery_status
+fixture_path: benchmarks/fixtures/file_discovery_status
+issue_file: issue.md
+test_command: pytest
+
+expected_files:
+  - order_app/formatter.py
+
+retention_facts:
+  - Customer-facing order summaries must use the existing human-readable status labels.
+  - The order number and owner output must remain unchanged.
