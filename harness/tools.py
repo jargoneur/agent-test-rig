@@ -35,7 +35,7 @@ class FileTools:
 
             files.append(str(relative))
 
-        return files
+        return sorted(files)
 
     def read_file(self, path: str) -> str:
         full_path = self._safe_path(path)
@@ -62,6 +62,7 @@ class FileTools:
             "stderr": result.stderr,
             "passed": result.returncode == 0,
         }
+
     def reset_repo(self) -> dict:
         reset = subprocess.run(
             "git reset --hard HEAD",
