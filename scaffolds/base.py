@@ -49,6 +49,9 @@ Protocol:
 - Return exactly one valid JSON object.
 - Do not use markdown fences, comments, triple-quoted strings, or explanatory text.
 - JSON string values must escape newlines as \\n.
+- Read an existing file before attempting to overwrite it.
+- A write to an unread existing file will be blocked.
+- Preserve existing public interfaces unless the task explicitly requires changing them.
 - After changing code, run the tests before finishing.
 - Finish only after tests have passed.
 
@@ -69,7 +72,7 @@ Choose the next action.
             if path and path not in state["files_read"]:
                 state["files_read"].append(path)
 
-        if action_name == "write_file":
+        if action_name == "write_file" and observation.get("type") == "write_success":
             path = action.get("path")
             if path and path not in state["files_written"]:
                 state["files_written"].append(path)
