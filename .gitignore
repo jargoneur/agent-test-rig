@@ -6,7 +6,9 @@ __pycache__/
 
 # Experiment outputs
 logs/*.jsonl
+logs/*.manifest.json
 results/batch_*.csv
+results/batch_*.manifest.json
 
 # Generated benchmark workspaces
 .workspaces/
