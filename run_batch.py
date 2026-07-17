@@ -9,6 +9,7 @@ from harness.model_adapter import OllamaModel
 from harness.tools import FileTools
 from harness.logger import JsonlLogger
 from harness.task_loader import TaskLoader
+from harness.workspace import prepare_workspace
 
 from agents.simple_agent import SimpleAgent
 from scaffolds import load_scaffold
@@ -22,10 +23,14 @@ def run_single(task_id, model_name, scaffold_name, repeat, max_steps):
     task = TaskLoader().load(task_id)
 
     model = OllamaModel(model_name)
-    tools = FileTools(task["repo_path"])
     scaffold = load_scaffold(scaffold_name)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    workspace_name = safe_name(
+        f"{task_id}_{model_name}_{scaffold_name}_r{repeat}_{timestamp}"
+    )
+    workspace_path = prepare_workspace(task, workspace_name)
+    tools = FileTools(workspace_path)
 
     log_path = (
         f"logs/"
@@ -67,6 +72,7 @@ def run_single(task_id, model_name, scaffold_name, repeat, max_steps):
         "agent_tests_run": state.get("tests_run"),
         "agent_last_test_passed": state.get("last_test_passed"),
         "strategy": state.get("strategy"),
+        "workspace_path": workspace_path,
         "log_path": log_path,
         "error": "",
     }
@@ -160,6 +166,7 @@ def main():
                             "agent_tests_run": None,
                             "agent_last_test_passed": None,
                             "strategy": None,
+                            "workspace_path": None,
                             "log_path": None,
                             "error": str(error),
                         }
@@ -186,6 +193,7 @@ def main():
         "agent_tests_run",
         "agent_last_test_passed",
         "strategy",
+        "workspace_path",
         "log_path",
         "error",
     ]
