@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 from harness.reproducibility import derive_run_seed, git_metadata, utc_now_iso
 
 
-JOB_SCHEMA_VERSION = 1
+JOB_SCHEMA_VERSION = 2
 
 
 def canonical_json(value: Any) -> str:
@@ -59,6 +59,7 @@ def model_identity(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         "preferred_worker",
         "base_url",
         "host",
+        "api_key",
         "notes",
     }
     return {
@@ -68,18 +69,29 @@ def model_identity(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def job_identity(job: Dict[str, Any]) -> Dict[str, Any]:
+def block_identity(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Identity shared by all scaffold conditions of one paired block."""
     return {
         "schema_version": JOB_SCHEMA_VERSION,
         "task_id": job["task_id"],
         "model": model_identity(job["model"]),
-        "scaffold": job["scaffold"],
         "repeat": int(job["repeat"]),
         "run_seed": int(job["run_seed"]),
         "max_steps": int(job["max_steps"]),
         "generation_options": job["generation_options"],
         "harness_commit": job.get("harness_commit", ""),
     }
+
+
+def job_identity(job: Dict[str, Any]) -> Dict[str, Any]:
+    identity = block_identity(job)
+    identity["scaffold"] = job["scaffold"]
+    return identity
+
+
+def make_block_id(job: Dict[str, Any]) -> str:
+    digest = sha256_json(block_identity(job))
+    return "block_" + digest[:24]
 
 
 def make_run_id(job: Dict[str, Any]) -> str:
@@ -90,6 +102,7 @@ def make_run_id(job: Dict[str, Any]) -> str:
 def validate_job(job: Dict[str, Any]) -> None:
     required = {
         "schema_version",
+        "block_id",
         "run_id",
         "task_id",
         "model",
@@ -104,11 +117,17 @@ def validate_job(job: Dict[str, Any]) -> None:
         raise ValueError("Job is missing required fields: " + ", ".join(missing))
     if job["schema_version"] != JOB_SCHEMA_VERSION:
         raise ValueError("Unsupported job schema version: %r" % job["schema_version"])
-    expected = make_run_id(job)
-    if job["run_id"] != expected:
+    expected_block = make_block_id(job)
+    if job["block_id"] != expected_block:
+        raise ValueError(
+            "Block ID does not match block identity: %s != %s"
+            % (job["block_id"], expected_block)
+        )
+    expected_run = make_run_id(job)
+    if job["run_id"] != expected_run:
         raise ValueError(
             "Run ID does not match job identity: %s != %s"
-            % (job["run_id"], expected)
+            % (job["run_id"], expected_run)
         )
 
 
@@ -129,6 +148,10 @@ def build_jobs(
         raise ValueError("repeats must be at least 1")
     if wave_size < 1:
         raise ValueError("wave_size must be at least 1")
+    if not scaffolds:
+        raise ValueError("At least one scaffold is required")
+    if len(set(scaffolds)) != len(scaffolds):
+        raise ValueError("Scaffold names must be unique")
 
     normalized_models = [
         normalize_model_spec(model, default_backend=default_backend)
@@ -168,6 +191,7 @@ def build_jobs(
                             "resource_class": model.get("resource_class"),
                         },
                     }
+                    job["block_id"] = make_block_id(job)
                     job["run_id"] = make_run_id(job)
                     jobs.append(job)
 
@@ -181,6 +205,51 @@ def build_jobs(
         )
     )
     return jobs
+
+
+def group_jobs_by_block(jobs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for job in jobs:
+        validate_job(job)
+        grouped.setdefault(job["block_id"], []).append(job)
+
+    blocks: List[Dict[str, Any]] = []
+    for block_id, block_jobs in grouped.items():
+        ordered_jobs = sorted(
+            block_jobs,
+            key=lambda item: int(item.get("scaffold_index", 0)),
+        )
+        first = ordered_jobs[0]
+        scaffold_names = [item["scaffold"] for item in ordered_jobs]
+        if len(scaffold_names) != len(set(scaffold_names)):
+            raise ValueError("Duplicate scaffold in block %s" % block_id)
+        for job in ordered_jobs[1:]:
+            if make_block_id(job) != block_id:
+                raise ValueError("Inconsistent block identity in %s" % block_id)
+        blocks.append(
+            {
+                "block_id": block_id,
+                "experiment_id": first.get("experiment_id"),
+                "wave": int(first.get("wave", 0)),
+                "task_id": first["task_id"],
+                "model_id": first["model"]["id"],
+                "resource_class": (first.get("requirements") or {}).get(
+                    "resource_class"
+                ),
+                "repeat": int(first["repeat"]),
+                "jobs": ordered_jobs,
+            }
+        )
+
+    return sorted(
+        blocks,
+        key=lambda block: (
+            int(block.get("wave", 0)),
+            str(block["model_id"]),
+            str(block["task_id"]),
+            int(block["repeat"]),
+        ),
+    )
 
 
 def read_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
@@ -238,7 +307,6 @@ def merge_jobs(
                 raise ValueError(
                     "Conflicting definitions for run_id %s" % job["run_id"]
                 )
-            # Preserve the original experiment and scheduling metadata.
             continue
         by_id[job["run_id"]] = job
     return sorted(
@@ -293,12 +361,13 @@ def result_is_complete(path: Path, run_id: Optional[str] = None) -> bool:
     return True
 
 
-def shard_matches(run_id: str, shard_index: int, shard_count: int) -> bool:
+def shard_matches(block_id: str, shard_index: int, shard_count: int) -> bool:
+    """Keep every scaffold condition of a block on the same shard."""
     if shard_count < 1:
         raise ValueError("shard_count must be at least 1")
     if shard_index < 0 or shard_index >= shard_count:
         raise ValueError("shard_index must be between 0 and shard_count - 1")
-    value = int(hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:16], 16)
+    value = int(hashlib.sha256(block_id.encode("utf-8")).hexdigest()[:16], 16)
     return value % shard_count == shard_index
 
 
@@ -308,13 +377,18 @@ def plan_metadata(
     jobs: Sequence[Dict[str, Any]],
     manifest_path: str,
 ) -> Dict[str, Any]:
+    blocks = group_jobs_by_block(jobs)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": utc_now_iso(),
         "experiment_id": experiment_id,
         "manifest_path": manifest_path,
         "job_count": len(jobs),
+        "block_count": len(blocks),
         "run_ids_sha256": sha256_json([job["run_id"] for job in jobs]),
+        "block_ids_sha256": sha256_json(
+            [block["block_id"] for block in blocks]
+        ),
         "config_sha256": sha256_json(config),
         "config": config,
         "repository": git_metadata(),
