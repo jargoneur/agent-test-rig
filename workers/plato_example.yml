@@ -1,0 +1,19 @@
+worker_id: plato-v100
+scheduler_url: http://127.0.0.1:8787
+results_root: distributed_results/plato-v100
+lease_seconds: 7200
+heartbeat_seconds: 60
+idle_seconds: 30
+stop_when_idle: false
+retry_failed_blocks: true
+
+capabilities:
+  resource_classes:
+    - small
+    - medium
+    - large
+
+# Add model_ids only when this worker should be restricted to specific
+# checkpoints. Tasks and scaffolds are never assigned manually.
+# model_ids:
+#   - qwen35-27b-q4km
