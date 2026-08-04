@@ -9,6 +9,12 @@ logs/*.jsonl
 logs/*.manifest.json
 results/batch_*.csv
 results/batch_*.manifest.json
+distributed_results/
+jobs/*.jsonl
+jobs/*.manifest.json
+merged_results*.csv
+merged_results*.csv.sha256
+PAUSE
 
 # Generated benchmark workspaces
 .workspaces/
