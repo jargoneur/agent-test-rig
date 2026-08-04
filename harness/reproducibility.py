@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import platform
@@ -5,6 +7,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Union
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -25,11 +28,7 @@ def derive_run_seed(
     model_name: str,
     repeat: int,
 ) -> int:
-    """Create a stable seed paired across scaffolds.
-
-    The scaffold name is deliberately excluded so corresponding scaffold
-    conditions receive the same run seed.
-    """
+    """Create a stable seed paired across scaffolds."""
     payload = "\0".join(
         [str(base_seed), task_id, model_name, str(repeat)]
     ).encode("utf-8")
@@ -43,9 +42,9 @@ def derive_step_seed(run_seed: int, step: int) -> int:
     return seed or 1
 
 
-def _git(command: list[str]) -> str:
+def _git(command: List[str]) -> str:
     result = subprocess.run(
-        ["git", *command],
+        ["git"] + command,
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
@@ -137,7 +136,7 @@ def task_metadata(task: dict) -> dict:
     return metadata
 
 
-def write_json(path: str | Path, data: dict) -> None:
+def write_json(path: Union[str, Path], data: dict) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
