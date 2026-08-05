@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class BaseScaffold:
@@ -36,10 +36,14 @@ class BaseScaffold:
             "last_test_passed": None,
             "strategy": self.strategy_name,
             "auxiliary_calls": [],
+            "context_files": [],
+            "context_spans": {},
         }
 
     def repository_context(self, issue, tools, history, state):
         files = tools.list_files(limit=self.file_list_limit)
+        state["context_files"] = list(files)
+        state["context_spans"] = {}
         return json.dumps(files, indent=2, ensure_ascii=False)
 
     def history_for_prompt(self, issue, tools, history, state):
