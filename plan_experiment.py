@@ -13,7 +13,35 @@ from harness.experiment_jobs import (
     plan_metadata,
     write_jobs,
 )
+from harness.model_profiles import resolve_models_from_lock
 from harness.reproducibility import write_json
+
+
+def _resolve_path(value: str, config_path: Path) -> Path:
+    candidate = Path(value)
+    if candidate.is_absolute() or candidate.exists():
+        return candidate
+    return config_path.parent / candidate
+
+
+def _resolve_models(config, config_path: Path):
+    lock_value = config.get("model_profile_lock")
+    if not lock_value:
+        return list(config["models"])
+    if config.get("models"):
+        raise ValueError(
+            "Use either models or model_profile_lock, not both"
+        )
+
+    lock_path = _resolve_path(str(lock_value), config_path)
+    profile_keys = config.get("model_profile_keys")
+    if profile_keys is not None and not isinstance(profile_keys, list):
+        raise TypeError("model_profile_keys must be a list")
+    return resolve_models_from_lock(
+        str(lock_path),
+        profile_keys=profile_keys,
+        allow_pending=bool(config.get("allow_pending_model_profiles", False)),
+    )
 
 
 def main():
@@ -38,9 +66,10 @@ def main():
         "jobs/%s.jsonl" % experiment_id
     )
     generation_options = dict(config.get("generation_options") or {})
+    models = _resolve_models(config, config_path)
     jobs = build_jobs(
         tasks=list(config["tasks"]),
-        models=list(config["models"]),
+        models=models,
         scaffolds=list(config["scaffolds"]),
         repeats=int(config.get("repeats", 1)),
         max_steps=int(config.get("max_steps", 8)),
