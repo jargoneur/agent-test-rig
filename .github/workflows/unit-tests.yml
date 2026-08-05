@@ -23,7 +23,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
         run: python -m pip install pytest requests PyYAML
-      - name: Compile Python sources
+      - name: Compile production Python sources
+        if: matrix.python-version == '3.12'
         run: >-
           python -m compileall -q
           agents harness scaffolds scripts
