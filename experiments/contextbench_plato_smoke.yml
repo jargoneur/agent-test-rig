@@ -1,10 +1,10 @@
-experiment_id: contextbench_plato_smoke
-manifest: jobs/contextbench_plato_smoke.jsonl
+experiment_id: contextbench_distributed_smoke
+manifest: jobs/contextbench_distributed_smoke.jsonl
 
 task_source:
   type: contextbench
   cache: benchmarks/contextbench/tasks.jsonl
-  limit: 4
+  limit: 8
 
 models:
   - id: qwen3_5_0_8b
