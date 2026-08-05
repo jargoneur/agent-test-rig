@@ -104,22 +104,23 @@ The preflight verifies:
 - the llama-server binary;
 - actual model loading and clean shutdown on the selected GPU.
 
-## 4. Generate the four-GPU smoke manifest
+## 4. Generate the distributed smoke manifest
 
 ```bash
 python plan_experiment.py \
   --config experiments/contextbench_plato_smoke.yml \
-  --output jobs/contextbench_plato_smoke.jsonl
+  --output jobs/contextbench_distributed_smoke.jsonl
 ```
 
 Expected dimensions:
 
 ```text
-4 ContextBench tasks × 1 model × 4 real scaffolds × 1 repeat = 16 runs
+8 ContextBench tasks × 1 model × 4 real scaffolds × 1 repeat = 32 runs
 ```
 
-The scheduler groups these into four paired blocks, so all four Plato workers
-receive real work. Every block contains all four conditions:
+The scheduler groups these into eight paired blocks. Four Plato workers can
+claim immediately, while remaining blocks leave enough work to attach the local
+laptop to the same queue. Every block contains all four real conditions:
 
 - `sweagent_last5`
 - `aider_repomap`
@@ -128,11 +129,11 @@ receive real work. Every block contains all four conditions:
 
 ## 5. Start Plato
 
-Use a separate database for the final smoke test:
+Use a separate database for the final distributed smoke test:
 
 ```bash
-export SCHEDULER_DB=scheduler/contextbench_plato_smoke.sqlite3
-bash scripts/start_plato.sh jobs/contextbench_plato_smoke.jsonl
+export SCHEDULER_DB=scheduler/contextbench_distributed_smoke.sqlite3
+bash scripts/start_plato.sh jobs/contextbench_distributed_smoke.jsonl
 ```
 
 This starts:
@@ -182,9 +183,18 @@ git pull --ff-only
 bash scripts/bootstrap.sh --prepare-contextbench
 ```
 
-Copy the smoke GGUF and `model_artifacts/registry.yml` from Plato, preserving the
-same relative artifact path and SHA-256, or provision the exact same revision
-locally.
+Copy the smoke GGUF and registry from Plato, preserving the relative artifact
+path and SHA-256:
+
+```bash
+mkdir -p model_artifacts/qwen3_5_0_8b
+scp \
+  jaron@10.50.200.80:~/agent-test-rig/model_artifacts/qwen3_5_0_8b/qwen3_5_0_8b-Q8_0.gguf \
+  model_artifacts/qwen3_5_0_8b/
+scp \
+  jaron@10.50.200.80:~/agent-test-rig/model_artifacts/registry.yml \
+  model_artifacts/registry.yml
+```
 
 Open and keep an SSH tunnel running:
 
@@ -219,7 +229,7 @@ source .venv/bin/activate
 rm -rf distributed_results/scheduler_export
 
 python scheduler_server.py \
-  --database scheduler/contextbench_plato_smoke.sqlite3 \
+  --database scheduler/contextbench_distributed_smoke.sqlite3 \
   --export-results distributed_results/scheduler_export
 
 python scripts/evaluate_contextbench.py \
