@@ -79,11 +79,14 @@ def execute_job(
         options=job["generation_options"],
     )
     model_metadata = model.runtime_metadata()
+    scaffold_options = dict(job.get("scaffold_options") or {})
+    scaffold_options["_run_seed"] = int(job["run_seed"])
+    scaffold_options["_resource_policy"] = resource_policy
     scaffold = load_scaffold(
         job["scaffold"],
         model=model,
         task=task,
-        options=job.get("scaffold_options") or {},
+        options=scaffold_options,
     )
 
     workspace_name = safe_name(run_id)
@@ -114,7 +117,12 @@ def execute_job(
 
     contextbench_path = None
     if task.get("source") == "contextbench":
-        trajectory = build_contextbench_trajectory(task, result, model_patch)
+        trajectory = build_contextbench_trajectory(
+            task,
+            result,
+            model_patch,
+            job=job,
+        )
         contextbench_path = (
             results_root / "contextbench" / (run_id + ".context.json")
         )
@@ -270,7 +278,7 @@ def main():
                     "run_id": job["run_id"],
                     "job": job,
                     "failed_at": utc_now_iso(),
-                    "worker": worker_metadata(args.worker_id),
+                    "worker": worker_metadata(worker_id),
                     "resource_policy": resource_policy.metadata(),
                     "error": str(error),
                     "traceback": traceback.format_exc(),
