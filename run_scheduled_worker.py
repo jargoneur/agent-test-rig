@@ -19,26 +19,77 @@ from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
 from run_worker import execute_job
 
 
+class SchedulerPauseRequested(RuntimeError):
+    pass
+
+
 class SchedulerClient:
     def __init__(self, base_url: str, token: Optional[str], timeout: int = 60):
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = max(5, int(timeout))
         self.headers = {"Content-Type": "application/json"}
         if token:
             self.headers["Authorization"] = "Bearer %s" % token
 
-    def post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        response = requests.post(
-            self.base_url + path,
-            headers=self.headers,
-            json=payload,
-            timeout=self.timeout,
+    def request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        retries: int = 0,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        attempts = max(1, int(retries) + 1)
+        last_error: Optional[Exception] = None
+        for attempt in range(attempts):
+            try:
+                response = requests.request(
+                    method,
+                    self.base_url + path,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=timeout or self.timeout,
+                )
+                if response.status_code >= 500:
+                    raise requests.HTTPError(
+                        "Scheduler returned %d: %s"
+                        % (response.status_code, response.text[:500]),
+                        response=response,
+                    )
+                response.raise_for_status()
+                value = response.json()
+                if not isinstance(value, dict):
+                    raise RuntimeError("Scheduler returned a non-object response")
+                return value
+            except (requests.RequestException, ValueError, RuntimeError) as error:
+                last_error = error
+                if attempt + 1 >= attempts:
+                    raise
+                delay = min(30.0, 1.5 * (2 ** attempt))
+                print(
+                    "Scheduler request retry %d/%d for %s: %s"
+                    % (attempt + 1, attempts - 1, path, error)
+                )
+                time.sleep(delay)
+        raise RuntimeError("Scheduler request failed: %s" % last_error)
+
+    def get(self, path: str, retries: int = 0) -> Dict[str, Any]:
+        return self.request("GET", path, retries=retries)
+
+    def post(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        retries: int = 0,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        return self.request(
+            "POST",
+            path,
+            payload=payload,
+            retries=retries,
+            timeout=timeout,
         )
-        response.raise_for_status()
-        value = response.json()
-        if not isinstance(value, dict):
-            raise RuntimeError("Scheduler returned a non-object response")
-        return value
 
 
 class HeartbeatThread(threading.Thread):
@@ -54,6 +105,8 @@ class HeartbeatThread(threading.Thread):
         self.interval = max(10, interval)
         self.stop_event = threading.Event()
         self.invalid = False
+        self.pause_requested = False
+        self.pause_reason: Optional[str] = None
 
     def run(self) -> None:
         while not self.stop_event.wait(self.interval):
@@ -62,6 +115,12 @@ class HeartbeatThread(threading.Thread):
                 if not response.get("valid"):
                     self.invalid = True
                     return
+                control = response.get("control") or {}
+                if control.get("paused"):
+                    self.pause_requested = True
+                    self.pause_reason = str(
+                        control.get("reason") or "central scheduler pause"
+                    )
             except Exception as error:
                 print("Heartbeat warning:", error)
 
@@ -93,6 +152,7 @@ def release_scheduler_lease_for_yield(
             "error": "resource_yield: %s" % reason,
             "retry": True,
         },
+        retries=3,
     )
 
 
@@ -114,18 +174,20 @@ def _resolve_capabilities(
 ) -> Dict[str, Any]:
     capabilities = dict(config.get("capabilities") or {})
     if model_manager is not None:
-        provisioned = set(model_manager.model_ids())
+        provisioned = set(model_manager.model_ids(verify=True))
         configured = set(str(value) for value in capabilities.get("model_ids", []))
         if configured:
             missing = configured.difference(provisioned)
             if missing:
                 raise ValueError(
-                    "Worker advertises models missing from registry: %s"
+                    "Worker advertises models not locally verified: %s"
                     % ", ".join(sorted(missing))
                 )
             capabilities["model_ids"] = sorted(configured)
         else:
             capabilities["model_ids"] = sorted(provisioned)
+    if not capabilities.get("model_ids"):
+        raise ValueError("Worker has no locally verified model artifacts")
     return capabilities
 
 
@@ -154,6 +216,9 @@ def main() -> None:
     heartbeat_seconds = int(config.get("heartbeat_seconds", 60))
     idle_seconds = int(config.get("idle_seconds", 30))
     stop_when_idle = bool(config.get("stop_when_idle", False))
+    scheduler_timeout = int(config.get("scheduler_timeout_seconds", 60))
+    completion_timeout = int(config.get("completion_timeout_seconds", 300))
+    completion_retries = int(config.get("completion_retries", 8))
 
     try:
         resource_policy.checkpoint("before_worker_registration")
@@ -162,16 +227,26 @@ def main() -> None:
         resource_policy.release()
         return
 
-    client = SchedulerClient(scheduler_url, token)
+    client = SchedulerClient(scheduler_url, token, timeout=scheduler_timeout)
     active_model_id = None
-    client.post(
+    registration = client.post(
         "/register",
         {
             "worker_id": worker_id,
             "capabilities": capabilities,
             "active_model_id": active_model_id,
         },
+        retries=5,
     )
+    initial_control = registration.get("control") or {}
+    if initial_control.get("paused"):
+        print(
+            "Scheduler is paused; worker exits without loading a model:",
+            initial_control.get("reason"),
+        )
+        resource_policy.release()
+        return
+
     print("Worker registered:", worker_id)
     print("Scheduler:", scheduler_url)
     print("Capabilities:", json.dumps(capabilities, ensure_ascii=False))
@@ -197,6 +272,9 @@ def main() -> None:
             if args.max_blocks is not None and completed_blocks >= args.max_blocks:
                 break
 
+            # Claims are deliberately not retried automatically: a lost claim
+            # response must expire rather than risk assigning this worker a
+            # second block while the first lease is still active.
             response = client.post(
                 "/claim",
                 {
@@ -206,8 +284,12 @@ def main() -> None:
                     "lease_seconds": lease_seconds,
                 },
             )
+            control = response.get("control") or {}
             claim = response.get("claim")
             if not claim:
+                if control.get("paused"):
+                    print("Scheduler pause received:", control.get("reason"))
+                    break
                 print("No compatible block available.")
                 if stop_when_idle:
                     break
@@ -252,10 +334,18 @@ def main() -> None:
                         json.dumps(runtime_overrides, ensure_ascii=False),
                     )
 
-                for job in block["jobs"]:
+                jobs = list(block["jobs"])
+                for index, job in enumerate(jobs):
                     resource_policy.checkpoint(
                         "before_scaffold:%s" % job["scaffold"]
                     )
+                    if heartbeat.invalid:
+                        raise RuntimeError("Scheduler lease expired during block execution")
+                    if heartbeat.pause_requested:
+                        raise SchedulerPauseRequested(
+                            heartbeat.pause_reason or "central scheduler pause"
+                        )
+
                     output_path = result_file(results_root, job["run_id"])
                     if output_path.exists():
                         try:
@@ -266,18 +356,35 @@ def main() -> None:
                             existing = None
                         if existing and existing.get("status") == "completed":
                             records.append(existing)
-                            continue
-                    record = execute_job(
-                        job,
-                        results_root,
-                        worker_id,
-                        resource_policy=resource_policy,
-                        runtime_overrides=runtime_overrides,
-                    )
-                    atomic_write_json(output_path, record)
-                    records.append(record)
+                        else:
+                            record = execute_job(
+                                job,
+                                results_root,
+                                worker_id,
+                                resource_policy=resource_policy,
+                                runtime_overrides=runtime_overrides,
+                            )
+                            atomic_write_json(output_path, record)
+                            records.append(record)
+                    else:
+                        record = execute_job(
+                            job,
+                            results_root,
+                            worker_id,
+                            resource_policy=resource_policy,
+                            runtime_overrides=runtime_overrides,
+                        )
+                        atomic_write_json(output_path, record)
+                        records.append(record)
 
-                heartbeat.stop()
+                    # Once the full paired block is finished, completing it is
+                    # safer than discarding it merely because pause arrived
+                    # during the final scaffold.
+                    if heartbeat.pause_requested and index + 1 < len(jobs):
+                        raise SchedulerPauseRequested(
+                            heartbeat.pause_reason or "central scheduler pause"
+                        )
+
                 if heartbeat.invalid:
                     raise RuntimeError("Scheduler lease expired during block execution")
                 client.post(
@@ -288,12 +395,18 @@ def main() -> None:
                         "lease_token": lease_token,
                         "results": records,
                     },
+                    retries=completion_retries,
+                    timeout=completion_timeout,
                 )
+                heartbeat.stop()
                 completed_blocks += 1
                 print("Completed block:", block_id)
-            except ResourceYieldRequested as error:
+                if heartbeat.pause_requested:
+                    print("Scheduler pause received after completed block.")
+                    yielded = True
+            except (SchedulerPauseRequested, ResourceYieldRequested) as error:
                 heartbeat.stop()
-                print("Shared resource requested; releasing block:", error)
+                print("Yielding and releasing block:", error)
                 try:
                     release_scheduler_lease_for_yield(
                         client,
@@ -318,6 +431,7 @@ def main() -> None:
                             "error": "worker interrupted",
                             "retry": True,
                         },
+                        retries=2,
                     )
                 finally:
                     raise
@@ -345,6 +459,7 @@ def main() -> None:
                             "error": str(error),
                             "retry": bool(config.get("retry_failed_blocks", True)),
                         },
+                        retries=3,
                     )
                 except Exception as scheduler_error:
                     print("Could not release failed block:", scheduler_error)
