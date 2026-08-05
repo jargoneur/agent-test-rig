@@ -29,6 +29,12 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+if [[ -n "${AGENT_RIG_STORAGE_SOFT_LIMIT_GIB:-}" ]]; then
+    python3 scripts/storage_preflight.py \
+        --soft-limit-gib "$AGENT_RIG_STORAGE_SOFT_LIMIT_GIB" \
+        --minimum-filesystem-free-gib "${AGENT_RIG_STORAGE_RESERVE_GIB:-5}"
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
@@ -135,6 +141,7 @@ PY
 .venv/bin/python -m pytest \
     test_experiment_jobs.py \
     test_scheduler_store.py \
+    test_distributed_scheduler_store.py \
     test_model_adapter.py \
     test_model_profiles.py \
     test_resource_policy.py \
