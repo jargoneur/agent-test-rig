@@ -71,6 +71,7 @@ bash scripts/fetch_upstreams.sh
 uv pip install --python .venv/bin/python -r .upstreams/aider/requirements.txt
 uv pip install --python .venv/bin/python \
     -r .upstreams/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+.venv/bin/python scripts/check_llama_converter.py
 
 if [[ "$SKIP_LLAMA_BUILD" -eq 0 ]]; then
     CUDA_FLAG=OFF
