@@ -14,6 +14,7 @@ import requests
 import yaml
 
 from harness.experiment_jobs import atomic_write_json, result_file
+from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
 from run_worker import execute_job
 
 
@@ -75,6 +76,31 @@ def load_config(path: str) -> Dict[str, Any]:
     return value
 
 
+def release_for_yield(
+    policy: ResourcePolicy,
+    client: SchedulerClient,
+    worker_id: str,
+    block_id: str,
+    lease_token: str,
+    reason: str,
+) -> None:
+    try:
+        client.post(
+            "/fail",
+            {
+                "worker_id": worker_id,
+                "block_id": block_id,
+                "lease_token": lease_token,
+                "error": "resource_yield: %s" % reason,
+                "retry": True,
+            },
+        )
+    finally:
+        return_code = policy.release()
+        if return_code not in (None, 0):
+            print("Resource release command returned:", return_code)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Pull complete paired blocks from the central scheduler."
@@ -85,6 +111,10 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.config)
+    resource_policy = ResourcePolicy.from_worker_config(
+        config,
+        pause_file=args.pause_file,
+    )
     worker_id = str(config.get("worker_id") or socket.gethostname())
     scheduler_url = str(config["scheduler_url"])
     token = config.get("scheduler_token") or os.environ.get("SCHEDULER_TOKEN")
@@ -95,6 +125,13 @@ def main() -> None:
     heartbeat_seconds = int(config.get("heartbeat_seconds", 60))
     idle_seconds = int(config.get("idle_seconds", 30))
     stop_when_idle = bool(config.get("stop_when_idle", False))
+
+    try:
+        resource_policy.checkpoint("before_worker_registration")
+    except ResourceYieldRequested as error:
+        print("Worker did not start:", error)
+        resource_policy.release()
+        return
 
     client = SchedulerClient(scheduler_url, token)
     active_model_id = None
@@ -109,12 +146,21 @@ def main() -> None:
     print("Worker registered:", worker_id)
     print("Scheduler:", scheduler_url)
     print("Capabilities:", json.dumps(capabilities, ensure_ascii=False))
+    print(
+        "Resource policy:",
+        json.dumps(resource_policy.metadata(), ensure_ascii=False),
+    )
 
     completed_blocks = 0
+    yielded = False
     while True:
-        if Path(args.pause_file).exists():
-            print("Pause file detected; stopping before next block.")
+        try:
+            resource_policy.checkpoint("before_block_claim")
+        except ResourceYieldRequested as error:
+            print("Yielding before next block:", error)
+            resource_policy.release()
             break
+
         if args.max_blocks is not None and completed_blocks >= args.max_blocks:
             break
 
@@ -165,6 +211,9 @@ def main() -> None:
                 )
             )
             for job in block["jobs"]:
+                resource_policy.checkpoint(
+                    "before_scaffold:%s" % job["scaffold"]
+                )
                 output_path = result_file(results_root, job["run_id"])
                 if output_path.exists():
                     try:
@@ -194,6 +243,18 @@ def main() -> None:
             )
             completed_blocks += 1
             print("Completed block:", block_id)
+        except ResourceYieldRequested as error:
+            heartbeat.stop()
+            print("Shared resource requested; releasing block:", error)
+            release_for_yield(
+                resource_policy,
+                client,
+                worker_id,
+                block_id,
+                lease_token,
+                str(error),
+            )
+            yielded = True
         except KeyboardInterrupt:
             heartbeat.stop()
             try:
@@ -208,6 +269,7 @@ def main() -> None:
                     },
                 )
             finally:
+                resource_policy.release()
                 raise
         except Exception as error:
             heartbeat.stop()
@@ -236,6 +298,9 @@ def main() -> None:
             except Exception as scheduler_error:
                 print("Could not release failed block:", scheduler_error)
             time.sleep(min(idle_seconds, 30))
+
+        if yielded:
+            break
 
     print("Completed blocks in this session:", completed_blocks)
 
