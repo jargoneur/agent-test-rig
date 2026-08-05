@@ -38,6 +38,24 @@ if ! [[ "$WORKER_COUNT" =~ ^[0-9]+$ ]] || [[ "$WORKER_COUNT" -lt 1 ]]; then
     echo "PLATO_WORKERS must be a positive integer." >&2
     exit 1
 fi
+if [[ -z "$MODEL_IDS" ]]; then
+    echo "Set MODEL_IDS to exactly one model ID for the active Plato model slot." >&2
+    exit 1
+fi
+if [[ "$MODEL_IDS" == *,* ]]; then
+    echo "Plato accepts exactly one active MODEL_IDS value, not a comma-separated list." >&2
+    exit 1
+fi
+ACTIVE_MODEL_ID="${MODEL_IDS#${MODEL_IDS%%[![:space:]]*}}"
+ACTIVE_MODEL_ID="${ACTIVE_MODEL_ID%${ACTIVE_MODEL_ID##*[![:space:]]}}"
+if [[ -z "$ACTIVE_MODEL_ID" ]]; then
+    echo "MODEL_IDS resolved to an empty model ID." >&2
+    exit 1
+fi
+
+.venv/bin/python scripts/plato_model_slot.py \
+    --registry "$REGISTRY" \
+    --keep-model-id "$ACTIVE_MODEL_ID"
 
 .venv/bin/python scripts/storage_preflight.py \
     --soft-limit-gib "$STORAGE_SOFT_LIMIT_GIB" \
@@ -118,7 +136,7 @@ for index in $(seq 0 $((WORKER_COUNT - 1))); do
         SHARED_RESOURCE="true" \
         OPERATOR_ACKNOWLEDGEMENT="user_started_manually_under_prof_eck_permission" \
         VERIFICATION_REFERENCE="prof_eck_permission_compute_until_contact_2026-08-05" \
-        MODEL_IDS="$MODEL_IDS" \
+        MODEL_IDS="$ACTIVE_MODEL_ID" \
         RESOURCE_CLASSES="$RESOURCE_CLASSES" \
         WAVES="$WAVES" \
         bash scripts/start_worker.sh \
@@ -130,6 +148,7 @@ sleep 3
 
 echo "Plato system started."
 echo "Manifest: $MANIFEST"
+echo "Active Plato model: $ACTIVE_MODEL_ID"
 echo "Scheduler database: $SCHEDULER_DB"
 echo "Backup directory: $BACKUP_DIR"
 echo "Workers started: $WORKER_COUNT"
