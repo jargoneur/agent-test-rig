@@ -76,29 +76,23 @@ def load_config(path: str) -> Dict[str, Any]:
     return value
 
 
-def release_for_yield(
-    policy: ResourcePolicy,
+def release_scheduler_lease_for_yield(
     client: SchedulerClient,
     worker_id: str,
     block_id: str,
     lease_token: str,
     reason: str,
 ) -> None:
-    try:
-        client.post(
-            "/fail",
-            {
-                "worker_id": worker_id,
-                "block_id": block_id,
-                "lease_token": lease_token,
-                "error": "resource_yield: %s" % reason,
-                "retry": True,
-            },
-        )
-    finally:
-        return_code = policy.release()
-        if return_code not in (None, 0):
-            print("Resource release command returned:", return_code)
+    client.post(
+        "/fail",
+        {
+            "worker_id": worker_id,
+            "block_id": block_id,
+            "lease_token": lease_token,
+            "error": "resource_yield: %s" % reason,
+            "retry": True,
+        },
+    )
 
 
 def main() -> None:
@@ -153,154 +147,166 @@ def main() -> None:
 
     completed_blocks = 0
     yielded = False
-    while True:
-        try:
-            resource_policy.checkpoint("before_block_claim")
-        except ResourceYieldRequested as error:
-            print("Yielding before next block:", error)
-            resource_policy.release()
-            break
-
-        if args.max_blocks is not None and completed_blocks >= args.max_blocks:
-            break
-
-        response = client.post(
-            "/claim",
-            {
-                "worker_id": worker_id,
-                "capabilities": capabilities,
-                "active_model_id": active_model_id,
-                "lease_seconds": lease_seconds,
-            },
-        )
-        claim = response.get("claim")
-        if not claim:
-            print("No compatible block available.")
-            if stop_when_idle:
+    try:
+        while True:
+            try:
+                resource_policy.checkpoint("before_block_claim")
+            except ResourceYieldRequested as error:
+                print("Yielding before next block:", error)
                 break
-            time.sleep(idle_seconds)
-            continue
 
-        block = claim["block"]
-        block_id = block["block_id"]
-        lease_token = claim["lease_token"]
-        active_model_id = block["model_id"]
-        heartbeat_payload = {
-            "worker_id": worker_id,
-            "block_id": block_id,
-            "lease_token": lease_token,
-            "lease_seconds": lease_seconds,
-            "active_model_id": active_model_id,
-        }
-        heartbeat = HeartbeatThread(
-            client,
-            heartbeat_payload,
-            heartbeat_seconds,
-        )
-        heartbeat.start()
-        records = []
-        try:
-            print(
-                "Claimed %s task=%s model=%s repeat=%s (%d scaffolds)"
-                % (
-                    block_id,
-                    block["task_id"],
-                    block["model_id"],
-                    block["repeat"],
-                    len(block["jobs"]),
-                )
-            )
-            for job in block["jobs"]:
-                resource_policy.checkpoint(
-                    "before_scaffold:%s" % job["scaffold"]
-                )
-                output_path = result_file(results_root, job["run_id"])
-                if output_path.exists():
-                    try:
-                        existing = json.loads(
-                            output_path.read_text(encoding="utf-8")
-                        )
-                    except (OSError, ValueError, json.JSONDecodeError):
-                        existing = None
-                    if existing and existing.get("status") == "completed":
-                        records.append(existing)
-                        continue
-                record = execute_job(job, results_root, worker_id)
-                atomic_write_json(output_path, record)
-                records.append(record)
+            if args.max_blocks is not None and completed_blocks >= args.max_blocks:
+                break
 
-            heartbeat.stop()
-            if heartbeat.invalid:
-                raise RuntimeError("Scheduler lease expired during block execution")
-            client.post(
-                "/complete",
+            response = client.post(
+                "/claim",
                 {
                     "worker_id": worker_id,
-                    "block_id": block_id,
-                    "lease_token": lease_token,
-                    "results": records,
+                    "capabilities": capabilities,
+                    "active_model_id": active_model_id,
+                    "lease_seconds": lease_seconds,
                 },
             )
-            completed_blocks += 1
-            print("Completed block:", block_id)
-        except ResourceYieldRequested as error:
-            heartbeat.stop()
-            print("Shared resource requested; releasing block:", error)
-            release_for_yield(
-                resource_policy,
+            claim = response.get("claim")
+            if not claim:
+                print("No compatible block available.")
+                if stop_when_idle:
+                    break
+                time.sleep(idle_seconds)
+                continue
+
+            block = claim["block"]
+            block_id = block["block_id"]
+            lease_token = claim["lease_token"]
+            active_model_id = block["model_id"]
+            heartbeat_payload = {
+                "worker_id": worker_id,
+                "block_id": block_id,
+                "lease_token": lease_token,
+                "lease_seconds": lease_seconds,
+                "active_model_id": active_model_id,
+            }
+            heartbeat = HeartbeatThread(
                 client,
-                worker_id,
-                block_id,
-                lease_token,
-                str(error),
+                heartbeat_payload,
+                heartbeat_seconds,
             )
-            yielded = True
-        except KeyboardInterrupt:
-            heartbeat.stop()
+            heartbeat.start()
+            records = []
             try:
-                client.post(
-                    "/fail",
-                    {
-                        "worker_id": worker_id,
-                        "block_id": block_id,
-                        "lease_token": lease_token,
-                        "error": "worker interrupted",
-                        "retry": True,
-                    },
+                print(
+                    "Claimed %s task=%s model=%s repeat=%s (%d scaffolds)"
+                    % (
+                        block_id,
+                        block["task_id"],
+                        block["model_id"],
+                        block["repeat"],
+                        len(block["jobs"]),
+                    )
                 )
-            finally:
-                resource_policy.release()
-                raise
-        except Exception as error:
-            heartbeat.stop()
-            print("Block failed:", error)
-            failure_path = results_root / "failed_blocks" / (block_id + ".json")
-            atomic_write_json(
-                failure_path,
-                {
-                    "block_id": block_id,
-                    "worker_id": worker_id,
-                    "error": str(error),
-                    "traceback": traceback.format_exc(),
-                },
-            )
-            try:
-                client.post(
-                    "/fail",
-                    {
-                        "worker_id": worker_id,
-                        "block_id": block_id,
-                        "lease_token": lease_token,
-                        "error": str(error),
-                        "retry": bool(config.get("retry_failed_blocks", True)),
-                    },
-                )
-            except Exception as scheduler_error:
-                print("Could not release failed block:", scheduler_error)
-            time.sleep(min(idle_seconds, 30))
+                for job in block["jobs"]:
+                    resource_policy.checkpoint(
+                        "before_scaffold:%s" % job["scaffold"]
+                    )
+                    output_path = result_file(results_root, job["run_id"])
+                    if output_path.exists():
+                        try:
+                            existing = json.loads(
+                                output_path.read_text(encoding="utf-8")
+                            )
+                        except (OSError, ValueError, json.JSONDecodeError):
+                            existing = None
+                        if existing and existing.get("status") == "completed":
+                            records.append(existing)
+                            continue
+                    record = execute_job(
+                        job,
+                        results_root,
+                        worker_id,
+                        resource_policy=resource_policy,
+                    )
+                    atomic_write_json(output_path, record)
+                    records.append(record)
 
-        if yielded:
-            break
+                heartbeat.stop()
+                if heartbeat.invalid:
+                    raise RuntimeError("Scheduler lease expired during block execution")
+                client.post(
+                    "/complete",
+                    {
+                        "worker_id": worker_id,
+                        "block_id": block_id,
+                        "lease_token": lease_token,
+                        "results": records,
+                    },
+                )
+                completed_blocks += 1
+                print("Completed block:", block_id)
+            except ResourceYieldRequested as error:
+                heartbeat.stop()
+                print("Shared resource requested; releasing block:", error)
+                try:
+                    release_scheduler_lease_for_yield(
+                        client,
+                        worker_id,
+                        block_id,
+                        lease_token,
+                        str(error),
+                    )
+                except Exception as scheduler_error:
+                    print("Could not immediately release yielded block:", scheduler_error)
+                    print("The lease will expire and return the block to the queue.")
+                yielded = True
+            except KeyboardInterrupt:
+                heartbeat.stop()
+                try:
+                    client.post(
+                        "/fail",
+                        {
+                            "worker_id": worker_id,
+                            "block_id": block_id,
+                            "lease_token": lease_token,
+                            "error": "worker interrupted",
+                            "retry": True,
+                        },
+                    )
+                finally:
+                    raise
+            except Exception as error:
+                heartbeat.stop()
+                print("Block failed:", error)
+                failure_path = results_root / "failed_blocks" / (block_id + ".json")
+                atomic_write_json(
+                    failure_path,
+                    {
+                        "block_id": block_id,
+                        "worker_id": worker_id,
+                        "resource_policy": resource_policy.metadata(),
+                        "error": str(error),
+                        "traceback": traceback.format_exc(),
+                    },
+                )
+                try:
+                    client.post(
+                        "/fail",
+                        {
+                            "worker_id": worker_id,
+                            "block_id": block_id,
+                            "lease_token": lease_token,
+                            "error": str(error),
+                            "retry": bool(config.get("retry_failed_blocks", True)),
+                        },
+                    )
+                except Exception as scheduler_error:
+                    print("Could not release failed block:", scheduler_error)
+                time.sleep(min(idle_seconds, 30))
+
+            if yielded:
+                break
+    finally:
+        release_code = resource_policy.release()
+        if release_code not in (None, 0):
+            print("Resource release command returned:", release_code)
 
     print("Completed blocks in this session:", completed_blocks)
 
