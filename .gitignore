@@ -23,6 +23,11 @@ PAUSE
 # Generated benchmark workspaces
 .workspaces/
 
+# Locked external source checkouts and model artifacts
+.upstreams/
+model_artifacts/
+model_metadata/
+
 # Local/editor files
 .vscode/
 .idea/
