@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PYTHON_VERSION="${AGENT_RIG_PYTHON:-3.12}"
+EVAL_PYTHON_VERSION="${CONTEXTBENCH_PYTHON:-3.11}"
 REQUIRE_CUDA=0
 PREPARE_CONTEXTBENCH=0
 SKIP_LLAMA_BUILD=0
@@ -33,17 +34,21 @@ if ! command -v uv >/dev/null 2>&1; then
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 
-uv python install "$PYTHON_VERSION"
+uv python install "$PYTHON_VERSION" "$EVAL_PYTHON_VERSION"
 if [[ ! -x .venv/bin/python ]]; then
     uv venv --python "$PYTHON_VERSION" .venv
 fi
+if [[ ! -x .venv-contextbench/bin/python ]]; then
+    uv venv --python "$EVAL_PYTHON_VERSION" .venv-contextbench
+fi
 
 uv pip install --python .venv/bin/python -r requirements/core.txt
+uv pip install --python .venv-contextbench/bin/python -r requirements/contextbench-eval.txt
 
 bash scripts/fetch_upstreams.sh
 
-# Install the pinned packages without editable mode so their verified source
-# checkouts stay clean. The harness imports the exact checkouts at runtime.
+# Install frozen Aider and SWE-agent as normal packages. Their source trees under
+# .upstreams remain immutable and are imported directly by the adapters.
 uv pip install --python .venv/bin/python \
     .upstreams/aider \
     .upstreams/swe-agent
@@ -51,24 +56,35 @@ uv pip install --python .venv/bin/python \
 if [[ "$SKIP_LLAMA_BUILD" -eq 0 ]]; then
     CUDA_FLAG=OFF
     if command -v nvcc >/dev/null 2>&1; then
+        export CUDACXX="$(command -v nvcc)"
+        CUDA_FLAG=ON
+    elif [[ -x /usr/local/cuda/bin/nvcc ]]; then
+        export CUDACXX=/usr/local/cuda/bin/nvcc
+        export PATH="/usr/local/cuda/bin:$PATH"
         CUDA_FLAG=ON
     elif [[ "$REQUIRE_CUDA" -eq 1 ]]; then
-        echo "CUDA build requested, but nvcc was not found." >&2
-        echo "The NVIDIA driver alone is insufficient; a CUDA toolkit is required." >&2
+        echo "CUDA build requested, but nvcc was not found in PATH or /usr/local/cuda/bin." >&2
+        echo "nvidia-smi reports driver capability only; a CUDA toolkit is also required." >&2
         exit 1
     fi
 
     CMAKE_BIN="$ROOT/.venv/bin/cmake"
     NINJA_BIN="$ROOT/.venv/bin/ninja"
-    "$CMAKE_BIN" \
-        -S .upstreams/llama.cpp \
-        -B .upstreams/llama.cpp/build \
-        -G Ninja \
-        -DGGML_CUDA="$CUDA_FLAG" \
-        -DLLAMA_CURL=ON \
-        -DCMAKE_BUILD_TYPE=Release \
+    CMAKE_ARGS=(
+        -S .upstreams/llama.cpp
+        -B .upstreams/llama.cpp/build
+        -G Ninja
+        -DGGML_CUDA="$CUDA_FLAG"
+        -DLLAMA_CURL=ON
+        -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_MAKE_PROGRAM="$NINJA_BIN"
-    "$CMAKE_BIN" --build .upstreams/llama.cpp/build --target llama-server llama-quantize -j
+    )
+    if [[ "$CUDA_FLAG" == ON ]]; then
+        CMAKE_ARGS+=( -DCMAKE_CUDA_COMPILER="$CUDACXX" )
+    fi
+    "$CMAKE_BIN" "${CMAKE_ARGS[@]}"
+    "$CMAKE_BIN" --build .upstreams/llama.cpp/build \
+        --target llama-server llama-quantize -j
 fi
 
 if [[ "$PREPARE_CONTEXTBENCH" -eq 1 ]]; then
@@ -89,15 +105,31 @@ for name in (
     print(name, upstream_path(name))
 PY
 
+CONTEXTBENCH_ROOT="$ROOT/.upstreams/contextbench"
+PYTHONPATH="$CONTEXTBENCH_ROOT" .venv-contextbench/bin/python - <<'PY'
+from contextbench.extractors.treesitter import available
+
+if not available():
+    raise SystemExit("ContextBench tree-sitter parser is not available")
+print("ContextBench evaluator tree-sitter: available")
+PY
+
+.venv/bin/python -m compileall -q \
+    agents harness scaffolds scripts \
+    plan_experiment.py run_worker.py run_scheduled_worker.py \
+    scheduler_server.py merge_results.py
+
 .venv/bin/python -m pytest \
     test_experiment_jobs.py \
     test_scheduler_store.py \
     test_model_adapter.py \
     test_model_profiles.py \
     test_resource_policy.py \
-    test_worker_configs.py
+    test_worker_configs.py \
+    test_contextbench_runtime.py
 
 echo
 echo "Bootstrap complete."
-echo "Python: $ROOT/.venv/bin/python"
+echo "Worker Python: $ROOT/.venv/bin/python"
+echo "Evaluator Python: $ROOT/.venv-contextbench/bin/python"
 echo "llama-server: $ROOT/.upstreams/llama.cpp/build/bin/llama-server"
