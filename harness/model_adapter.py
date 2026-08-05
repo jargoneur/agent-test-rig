@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+import math
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -13,6 +15,14 @@ def _resolved_sampling_options(options: Dict[str, Any]) -> Dict[str, Any]:
     if do_sample is False:
         resolved["temperature"] = 0.0
     return resolved
+
+
+def _approximate_token_count(value: Any) -> int:
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False)
+    return max(1, int(math.ceil(len(text) / 4.0)))
 
 
 class OllamaModel:
@@ -43,23 +53,7 @@ class OllamaModel:
             options["seed"] = int(seed)
         return options
 
-    def generate(self, prompt, seed=None, timeout=None):
-        url = "%s/api/generate" % self.host
-        options = self.effective_options(seed)
-        payload = {
-            "model": self.model_name,
-            "prompt": prompt,
-            "stream": False,
-            "options": options,
-        }
-        response = requests.post(
-            url,
-            json=payload,
-            timeout=timeout or self.timeout,
-        )
-        response.raise_for_status()
-        data = response.json()
-
+    def _capture_metadata(self, data: Dict[str, Any], options: Dict[str, Any]) -> None:
         metadata_fields = [
             "model",
             "created_at",
@@ -78,7 +72,49 @@ class OllamaModel:
             if key in data
         }
         self.last_generation_metadata["options"] = options
+
+    def generate(self, prompt, seed=None, timeout=None):
+        options = self.effective_options(seed)
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": options,
+        }
+        response = requests.post(
+            "%s/api/generate" % self.host,
+            json=payload,
+            timeout=timeout or self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        self._capture_metadata(data, options)
         return data["response"]
+
+    def generate_messages(self, messages, seed=None, timeout=None):
+        options = self.effective_options(seed)
+        payload = {
+            "model": self.model_name,
+            "messages": list(messages),
+            "stream": False,
+            "options": options,
+        }
+        response = requests.post(
+            "%s/api/chat" % self.host,
+            json=payload,
+            timeout=timeout or self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        self._capture_metadata(data, options)
+        message = data.get("message") or {}
+        content = message.get("content")
+        if content is None:
+            raise RuntimeError("Ollama chat response has no message content")
+        return content
+
+    def token_count(self, value: Any) -> int:
+        return _approximate_token_count(value)
 
     def runtime_metadata(self, timeout=60) -> dict:
         version_response = requests.get(
@@ -174,11 +210,18 @@ class OpenAICompatibleModel:
             "Content-Type": "application/json",
         }
 
-    def build_payload(self, prompt, seed=None) -> Dict[str, Any]:
+    def build_payload(
+        self,
+        prompt=None,
+        seed=None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         options = self.effective_options(seed)
+        if messages is None:
+            messages = [{"role": "user", "content": str(prompt or "")}]
         payload: Dict[str, Any] = {
             "model": self.model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": list(messages),
             "stream": False,
         }
 
@@ -209,10 +252,7 @@ class OpenAICompatibleModel:
 
         return payload
 
-    def generate(self, prompt, seed=None, timeout=None):
-        options = self.effective_options(seed)
-        payload = self.build_payload(prompt, seed=seed)
-
+    def _request(self, payload, options, timeout=None):
         response = requests.post(
             "%s/chat/completions" % self.base_url,
             headers=self._headers(),
@@ -241,6 +281,38 @@ class OpenAICompatibleModel:
         }
         return content
 
+    def generate(self, prompt, seed=None, timeout=None):
+        options = self.effective_options(seed)
+        payload = self.build_payload(prompt=prompt, seed=seed)
+        return self._request(payload, options, timeout=timeout)
+
+    def generate_messages(self, messages, seed=None, timeout=None):
+        options = self.effective_options(seed)
+        payload = self.build_payload(messages=list(messages), seed=seed)
+        return self._request(payload, options, timeout=timeout)
+
+    def token_count(self, value: Any) -> int:
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        if self.backend_name == "llama_cpp":
+            root = self.base_url[:-3] if self.base_url.endswith("/v1") else self.base_url
+            try:
+                response = requests.post(
+                    "%s/tokenize" % root,
+                    headers=self._headers(),
+                    json={"content": text},
+                    timeout=min(30, self.timeout),
+                )
+                response.raise_for_status()
+                data = response.json()
+                tokens = data.get("tokens")
+                if isinstance(tokens, list):
+                    return max(1, len(tokens))
+                if isinstance(tokens, int):
+                    return max(1, tokens)
+            except requests.RequestException:
+                pass
+        return _approximate_token_count(text)
+
     def runtime_metadata(self, timeout=60) -> dict:
         metadata = {
             "backend": self.backend_name,
@@ -262,6 +334,10 @@ class OpenAICompatibleModel:
             )
             metadata["models_endpoint"] = data
             metadata["model_entry"] = entry
+            if entry is None and models:
+                metadata["metadata_warning"] = (
+                    "Requested model alias was not listed exactly by the server"
+                )
         except requests.RequestException as error:
             metadata["metadata_warning"] = str(error)
         return metadata
@@ -277,7 +353,11 @@ def create_model(model_spec, options=None, timeout=600):
         raise TypeError("model_spec must be a string or mapping")
 
     backend = str(model_spec.get("backend", "ollama")).lower()
-    model_name = model_spec.get("name") or model_spec.get("model")
+    model_name = (
+        model_spec.get("runtime_name")
+        or model_spec.get("name")
+        or model_spec.get("model")
+    )
     if not model_name:
         raise ValueError("model_spec requires a model name")
 
