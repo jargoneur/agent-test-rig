@@ -139,7 +139,7 @@ def main() -> None:
             str(pred_path),
             "--out",
             str(metrics_path),
-            "--cache-dir",
+            "--cache",
             str(Path(args.cache_dir).resolve()),
         ]
         print("Condition:", condition, "instances=", len(by_instance))
