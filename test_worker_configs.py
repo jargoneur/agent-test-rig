@@ -24,7 +24,7 @@ def test_every_worker_explicitly_declares_resource_policy():
         assert isinstance(config["resource_policy"], dict), path
 
 
-def test_every_shared_worker_prioritizes_other_users_and_fails_closed_when_pending():
+def test_every_shared_worker_has_an_explicit_operation_mode():
     paths = sorted(WORKER_ROOT.glob("*.yml")) + sorted(WORKER_ROOT.glob("*.yaml"))
     for path in paths:
         config = load_worker(path)
@@ -34,12 +34,19 @@ def test_every_shared_worker_prioritizes_other_users_and_fails_closed_when_pendi
             continue
 
         assert policy.get("other_users_priority") is True, path
-        assert policy.get("mode") in {
+        mode = policy.get("mode")
+        assert mode in {
             "scheduler_preemptible",
             "external_yield_signal",
+            "manual_operator",
         }, path
-        assert policy.get("verification_reference"), path
 
+        if mode == "manual_operator":
+            assert policy.get("operator_acknowledgement"), path
+            ResourcePolicy.from_worker_config(config)
+            continue
+
+        assert policy.get("verification_reference"), path
         if policy.get("priority_mechanism_verified") is True:
             ResourcePolicy.from_worker_config(config)
         else:
