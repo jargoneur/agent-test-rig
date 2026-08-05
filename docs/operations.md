@@ -1,9 +1,8 @@
 # Agent Test Rig Operations
 
-This document is the operator procedure for the distributed ContextBench study.
-The operator starts and stops the system. The workers pull compatible paired
-blocks from one central scheduler; tasks, repeats, and scaffold conditions are
-not assigned manually.
+This is the operator procedure for the distributed ContextBench study. Workers
+pull compatible paired blocks from one central scheduler; tasks, repeats and
+scaffold conditions are not assigned manually.
 
 ## Runtime layout
 
@@ -12,12 +11,22 @@ not assigned manually.
 - Frozen upstream sources: `.upstreams/`.
 - Model artifacts and registry: `model_artifacts/`.
 - Shared repository mirror cache: `.cache/repos/` by default.
-- Scheduler databases: `scheduler/*.sqlite3`.
-- Central completed records: inside the selected scheduler database.
+- Authoritative scheduler database: `scheduler/*.sqlite3`.
+- Online scheduler backups: `scheduler/backups/` by default.
+- Central completed records: inside the scheduler database and its backups.
 - Worker-local logs and resumable run files: `distributed_results/`.
 
 The separate evaluator environment is intentional. Frozen Aider and frozen
 ContextBench require incompatible tree-sitter versions.
+
+## Resource rule for Plato
+
+Prof. Alexander Eck has stated that project computation may run on Plato until
+he contacts the user with a different instruction. No scheduler, reservation or
+automatic interest-management system is available. Plato therefore runs in
+`manual_operator` mode: the operator checks use before starting, keeps the run
+observable and obeys a direct stop request. The harness does not claim automatic
+preemption.
 
 ## 1. Checkout and bootstrap on Plato
 
@@ -42,33 +51,24 @@ git pull --ff-only
 bash scripts/bootstrap.sh --require-cuda --prepare-contextbench
 ```
 
-The bootstrap performs all of the following:
+The bootstrap installs user-local Python environments, fetches frozen upstreams,
+compiles pinned llama.cpp, prepares the frozen 150-task ContextBench cache and
+runs the compile and unit-test suite.
 
-1. installs user-local Python 3.12 and 3.11 through `uv`;
-2. creates the worker and evaluator environments;
-3. installs the runtime dependencies;
-4. checks out every frozen upstream at its exact commit;
-5. installs the frozen Aider dependency lock;
-6. compiles the pinned llama.cpp `llama-server` and `llama-quantize`;
-7. creates the frozen 150-task ContextBench cache and gold parquet;
-8. runs the compile and unit-test suite.
+A CUDA build requires an installed toolkit containing `nvcc`. The version shown
+by `nvidia-smi` describes driver compatibility and does not prove that the
+compiler is installed.
 
-A CUDA build requires an installed CUDA toolkit containing `nvcc`. The version
-reported by `nvidia-smi` describes driver compatibility and does not prove that
-the compiler is installed.
-
-## 2. Provision a smoke-test model
+## 2. Provision the smoke model
 
 Resolve and review the exact Hugging Face revision:
 
 ```bash
-cd ~/agent-test-rig
 source .venv/bin/activate
-
 python scripts/resolve_model_revision.py Qwen/Qwen3.5-0.8B
 ```
 
-Copy the printed 40-character `resolved_revision` into the next command:
+Use the printed 40-character revision:
 
 ```bash
 python scripts/provision_gguf.py \
@@ -78,13 +78,13 @@ python scripts/provision_gguf.py \
   --context-size 32768
 ```
 
-This downloads the exact checkpoint, converts it with the pinned llama.cpp,
-quantizes it to Q8_0, hashes the GGUF, and writes
-`model_artifacts/registry.yml` plus a provenance record.
+This downloads the exact checkpoint, converts it with pinned llama.cpp,
+quantizes it to Q8_0, records provenance and writes a SHA-256 registry entry.
+The smoke deployment does not freeze the final scientific profile by itself.
 
 ## 3. Full preflight
 
-Select one free Plato GPU UUID from `nvidia-smi -L`, then run:
+Select one free GPU UUID from `nvidia-smi -L`:
 
 ```bash
 python scripts/preflight.py \
@@ -94,15 +94,9 @@ python scripts/preflight.py \
   --gpu GPU-REPLACE-WITH-UUID
 ```
 
-The preflight verifies:
-
-- every upstream checkout and commit;
-- all four real scaffold imports;
-- the isolated ContextBench evaluator;
-- exactly 150 frozen benchmark tasks;
-- model artifact existence and SHA-256;
-- the llama-server binary;
-- actual model loading and clean shutdown on the selected GPU.
+Preflight verifies upstream commits, four real scaffold imports, the isolated
+evaluator, exactly 150 cached tasks, artifact SHA-256, llama-server startup and
+clean model shutdown on the selected GPU.
 
 ## 4. Generate the distributed smoke manifest
 
@@ -115,12 +109,10 @@ python plan_experiment.py \
 Expected dimensions:
 
 ```text
-8 ContextBench tasks × 1 model × 4 real scaffolds × 1 repeat = 32 runs
+8 tasks × 1 model × 4 real scaffolds × 1 repeat = 32 runs
 ```
 
-The scheduler groups these into eight paired blocks. Four Plato workers can
-claim immediately, while remaining blocks leave enough work to attach the local
-laptop to the same queue. Every block contains all four real conditions:
+The scheduler groups these into eight paired blocks. Every block contains:
 
 - `sweagent_last5`
 - `aider_repomap`
@@ -129,23 +121,29 @@ laptop to the same queue. Every block contains all four real conditions:
 
 ## 5. Start Plato
 
-Use a separate database for the final distributed smoke test:
+Use a separate scheduler database for the smoke:
 
 ```bash
 export SCHEDULER_DB=scheduler/contextbench_distributed_smoke.sqlite3
+export MODEL_IDS=qwen3_5_0_8b
+export PLATO_WORKERS=1
 bash scripts/start_plato.sh jobs/contextbench_distributed_smoke.jsonl
 ```
 
-This starts:
+`PLATO_WORKERS` defaults to `1`. Increase it only after the one-GPU smoke has
+passed and the operator deliberately chooses to use more GPUs. Each worker is
+bound to one GPU UUID and one managed llama-server port.
 
-- one central SQLite-backed HTTP scheduler;
-- four independent scheduled workers;
-- one managed llama-server port per worker;
-- one fixed V100 UUID per worker;
-- automatic model loading, reuse, and block assignment.
+The scheduler:
 
-No `--max-blocks` limit is used. Workers remain available for compatible work.
-The operator-started shared-resource mode is recorded explicitly in every run.
+- binds to `127.0.0.1` and uses a bearer token;
+- stores leases, workers and results in SQLite WAL mode;
+- creates a validated startup backup;
+- creates online backups every 15 minutes by default;
+- retains the latest 96 backups by default;
+- accepts exact duplicate completion uploads idempotently;
+- refuses a conflicting result for an already completed block;
+- persists central pause state across restarts.
 
 Status:
 
@@ -153,12 +151,30 @@ Status:
 bash scripts/status_plato.sh
 ```
 
+Explicit scheduler controls:
+
+```bash
+TOKEN="$(cat run/plato/scheduler.token)"
+
+.venv/bin/python scripts/scheduler_control.py status --token "$TOKEN"
+.venv/bin/python scripts/scheduler_control.py pause --token "$TOKEN" \
+  --reason "operator pause"
+.venv/bin/python scripts/scheduler_control.py resume --token "$TOKEN"
+.venv/bin/python scripts/scheduler_control.py backup --token "$TOKEN" \
+  --label manual-checkpoint
+```
+
+A central pause prevents new claims. Heartbeats propagate the pause into each
+worker's local pause file, so resource-policy checkpoints release an incomplete
+paired block at the next safe model/tool checkpoint. A model call or tool
+process already executing cannot be interrupted cooperatively.
+
 Logs:
 
 ```bash
 tail -f logs/plato/scheduler.log
 tail -f logs/plato/worker-gpu*.log
-tail -f logs/plato/llama-gpu*.log
+tail -f logs/workers/plato-v100-gpu*/llama-server.log
 ```
 
 Graceful stop:
@@ -167,60 +183,75 @@ Graceful stop:
 bash scripts/stop_plato.sh
 ```
 
-The stop procedure creates `PAUSE`, lets workers release their current blocks at
-safe checkpoints, stops their model servers, and then stops the scheduler.
-Completed runs remain in the scheduler database. Interrupted blocks return to
-the queue.
+The stop procedure centrally pauses the queue, signals workers, requests a
+backup, then stops the scheduler. The scheduler also attempts a final shutdown
+backup. Completed runs remain stored; incomplete leases return to the queue.
 
-## 6. Attach the local laptop to the same queue
+## 6. Recover the scheduler database
 
-On the laptop, a CPU llama.cpp build is sufficient for the 0.8B smoke model:
+The scheduler performs a full integrity check at startup and refuses to run a
+corrupt database. Restore only while the scheduler is stopped.
 
-```bash
-cd ~/agent-test-rig
-git checkout distributed-workers
-git pull --ff-only
-bash scripts/bootstrap.sh --prepare-contextbench
-```
-
-Copy the smoke GGUF and registry from Plato, preserving the relative artifact
-path and SHA-256:
+Preserve the damaged/current file first, then restore a chosen backup:
 
 ```bash
-mkdir -p model_artifacts/qwen3_5_0_8b
-scp \
-  jaron@10.50.200.80:~/agent-test-rig/model_artifacts/qwen3_5_0_8b/qwen3_5_0_8b-Q8_0.gguf \
-  model_artifacts/qwen3_5_0_8b/
-scp \
-  jaron@10.50.200.80:~/agent-test-rig/model_artifacts/registry.yml \
-  model_artifacts/registry.yml
+mv scheduler/contextbench_distributed_smoke.sqlite3 \
+   scheduler/contextbench_distributed_smoke.sqlite3.preserved
+
+python scripts/restore_scheduler_backup.py \
+  --backup scheduler/backups/SCHEDULER-BACKUP.sqlite3 \
+  --database scheduler/contextbench_distributed_smoke.sqlite3
 ```
 
-Open and keep an SSH tunnel running:
+To replace an existing destination deliberately, add `--replace-existing`. The
+restore command validates the backup and prints the restored queue status.
+
+SQLite is sufficient for the current queue size. The protection required here
+is consistent backup and restart recovery, not replacement with a larger
+database system.
+
+## 7. Attach an additional PC
+
+Keep the central scheduler local to Plato and open one SSH tunnel per remote
+machine:
 
 ```bash
 ssh -N -L 8877:127.0.0.1:8787 jaron@10.50.200.80
 ```
 
-In another local terminal:
+Synchronize exact model artifacts with resumable `rsync` and SHA-256 validation:
 
 ```bash
-cd ~/agent-test-rig
-source .venv/bin/activate
+export ARTIFACT_SOURCE="jaron@10.50.200.80:~/agent-test-rig/model_artifacts/"
+export MODEL_IDS=qwen3_5_0_8b
+bash scripts/sync_model_artifacts.sh
+```
 
+Read the scheduler token through SSH and start one generic worker:
+
+```bash
 export SCHEDULER_TOKEN="$(
   ssh jaron@10.50.200.80 \
     'cat ~/agent-test-rig/run/plato/scheduler.token'
 )"
 export SCHEDULER_URL=http://127.0.0.1:8877
+export MODEL_REGISTRY=model_artifacts/registry.yml
+export MODEL_IDS=qwen3_5_0_8b
+export WORKER_ID="$(hostname)-gpu0"
+export WORKER_GPU=0
+export LLAMA_PORT=8080
+export RESOURCE_MODE=local_exclusive
+export SHARED_RESOURCE=false
 
-bash scripts/start_local_worker.sh
+bash scripts/start_worker.sh
 ```
 
-The local registry determines which model IDs the laptop advertises. The
-scheduler sends it only compatible paired blocks.
+For another shared machine, declare its real mode and permission reference
+instead of using `local_exclusive`. A worker advertises only artifacts that
+exist locally and match the recorded SHA-256. Scheduler eligibility requires
+both the concrete model ID and any declared resource class.
 
-## 7. Export and evaluate completed results
+## 8. Export and evaluate results
 
 After stopping the smoke system:
 
@@ -241,24 +272,17 @@ python scripts/evaluate_contextbench.py \
 Evaluation is performed independently for every model × scaffold × repeat
 condition by the pinned ContextBench evaluator.
 
-## 8. Generate the provisional six-Qwen validation queue
+## 9. Scientific core
 
-After all six exact model artifacts and registry entries are provisioned:
-
-```bash
-python plan_experiment.py \
-  --config experiments/contextbench_qwen_core.yml \
-  --output jobs/contextbench_qwen3_5_provisional_validation.jsonl
-```
-
-This queue contains:
+The binding base experiment contains two complete selected instruction-tuned
+families:
 
 ```text
-6 models × 150 tasks × 4 scaffolds × 3 repeats = 10,800 runs
+6 Qwen3.5 + 5 Gemma 4 = 11 models
+11 × 150 tasks × 4 scaffolds × 3 repeats = 19,800 runs
 ```
 
-It is deliberately marked `provisional_validation_only`. It validates the full
-operational scale but is not the frozen scientific core until exact checkpoint
-revisions, artifact hashes, chat/thinking modes, and official per-checkpoint
-generation profiles are locked. The full ten-model 18,000-run manifest also
-requires confirmation of the four Gemma 4 checkpoint IDs.
+The complete manifest remains blocked until exact revisions, recommended
+inference profiles, artifact/tokenizer/template hashes and measured one-GPU
+memory envelopes are frozen for all eleven checkpoints. These scientific freeze
+gates do not block the one-model infrastructure smoke.
