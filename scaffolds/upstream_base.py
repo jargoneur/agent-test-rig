@@ -64,6 +64,28 @@ class UpstreamScaffold(BaseScaffold):
         )
         return response
 
+    def auxiliary_generate_messages(
+        self,
+        messages,
+        purpose: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        started = time.time()
+        prompt = json.dumps(messages, indent=2, ensure_ascii=False)
+        with self._temporary_model_options(options):
+            if hasattr(self.model, "generate_messages"):
+                response = self.model.generate_messages(messages)
+            else:
+                response = self.model.generate(prompt)
+        self._record_auxiliary_call(
+            purpose,
+            prompt,
+            response,
+            started,
+            options=options,
+        )
+        return response
+
     def token_count(self, value: Any) -> int:
         if self.model is not None and hasattr(self.model, "token_count"):
             return int(self.model.token_count(value))
@@ -117,9 +139,8 @@ class AiderModelShim:
         return self.scaffold.token_count(value)
 
     def simple_send_with_retries(self, messages) -> str:
-        prompt = json.dumps(messages, indent=2, ensure_ascii=False)
-        return self.scaffold.auxiliary_generate(
-            prompt,
+        return self.scaffold.auxiliary_generate_messages(
+            messages,
             purpose="aider_chat_summary",
         )
 
