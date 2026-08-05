@@ -149,7 +149,7 @@ class AiderIOShim:
     def __init__(self):
         self.messages: List[str] = []
 
-    def _capture(self, message: Any) -> None:
+    def _capture(self, message: Any, *args: Any, **kwargs: Any) -> None:
         self.messages.append(str(message))
 
     tool_output = _capture
