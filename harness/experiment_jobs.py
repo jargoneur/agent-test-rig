@@ -43,6 +43,10 @@ def normalize_model_spec(model: Any, default_backend: str = "ollama") -> Dict[st
     if not name or not model_id:
         raise ValueError("Model mapping must define 'name' or 'model'")
 
+    model_options = normalized.get("generation_options")
+    if model_options is not None and not isinstance(model_options, dict):
+        raise TypeError("Model generation_options must be a mapping")
+
     normalized["id"] = str(model_id)
     normalized["name"] = str(name)
     normalized.setdefault("backend", default_backend)
@@ -164,6 +168,13 @@ def build_jobs(
     for task_index, task_id in enumerate(tasks):
         wave = task_index // wave_size + 1
         for model_index, model in enumerate(normalized_models):
+            model_generation_options = dict(generation_options)
+            model_generation_options.update(
+                dict(model.get("generation_options") or {})
+            )
+            job_model = dict(model)
+            job_model.pop("generation_options", None)
+
             for repeat in range(1, repeats + 1):
                 run_seed = derive_run_seed(
                     base_seed,
@@ -179,13 +190,13 @@ def build_jobs(
                         "task_index": task_index,
                         "task_id": str(task_id),
                         "model_index": model_index,
-                        "model": dict(model),
+                        "model": dict(job_model),
                         "scaffold_index": scaffold_index,
                         "scaffold": str(scaffold),
                         "repeat": repeat,
                         "run_seed": run_seed,
                         "max_steps": int(max_steps),
-                        "generation_options": dict(generation_options),
+                        "generation_options": dict(model_generation_options),
                         "harness_commit": harness_commit or "",
                         "requirements": {
                             "resource_class": model.get("resource_class"),
