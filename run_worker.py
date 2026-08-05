@@ -7,7 +7,9 @@ import socket
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import yaml
 
 from agents.simple_agent import SimpleAgent
 from harness.experiment_jobs import (
@@ -25,6 +27,7 @@ from harness.reproducibility import (
     task_metadata,
     utc_now_iso,
 )
+from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
 from harness.task_loader import TaskLoader
 from harness.tools import FileTools
 from harness.workspace import prepare_workspace
@@ -49,7 +52,22 @@ def worker_metadata(worker_id: str) -> dict:
     return metadata
 
 
-def execute_job(job: Dict[str, Any], results_root: Path, worker_id: str) -> dict:
+def load_worker_config(path: str) -> Dict[str, Any]:
+    value = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("Worker config must be a YAML mapping")
+    return value
+
+
+def execute_job(
+    job: Dict[str, Any],
+    results_root: Path,
+    worker_id: str,
+    resource_policy: Optional[ResourcePolicy] = None,
+) -> dict:
+    if resource_policy is not None:
+        resource_policy.checkpoint("before_job_setup")
+
     run_id = job["run_id"]
     task = TaskLoader().load(job["task_id"])
     model = create_model(
@@ -75,6 +93,7 @@ def execute_job(job: Dict[str, Any], results_root: Path, worker_id: str) -> dict
         max_steps=int(job["max_steps"]),
         expected_files=task.get("expected_files", []),
         run_seed=int(job["run_seed"]),
+        resource_policy=resource_policy,
     )
     result = agent.run(task["issue"])
 
@@ -86,11 +105,36 @@ def execute_job(job: Dict[str, Any], results_root: Path, worker_id: str) -> dict
         "started_at": started_at,
         "finished_at": utc_now_iso(),
         "worker": worker_metadata(worker_id),
+        "resource_policy": (
+            resource_policy.metadata() if resource_policy is not None else None
+        ),
         "task": task_metadata(task),
         "model_runtime": model_metadata,
         "log_path": str(log_path),
         "result": result,
     }
+
+
+def resolve_standalone_resource_policy(args) -> ResourcePolicy:
+    if bool(args.worker_config) == bool(args.local_exclusive):
+        raise ValueError(
+            "Declare exactly one of --worker-config or --local-exclusive"
+        )
+
+    if args.worker_config:
+        config = load_worker_config(args.worker_config)
+        return ResourcePolicy.from_worker_config(
+            config,
+            pause_file=args.pause_file,
+        )
+
+    return ResourcePolicy(
+        {
+            "shared_resource": False,
+            "mode": "local_exclusive",
+            "pause_file": args.pause_file,
+        }
+    )
 
 
 def main():
@@ -109,8 +153,18 @@ def main():
     parser.add_argument("--pause-file", default="PAUSE")
     parser.add_argument("--keep-workspaces", action="store_true")
     parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument(
+        "--worker-config",
+        help="Worker YAML containing an explicit resource_policy declaration",
+    )
+    parser.add_argument(
+        "--local-exclusive",
+        action="store_true",
+        help="Explicitly declare that this direct worker uses only local exclusive compute",
+    )
     args = parser.parse_args()
 
+    resource_policy = resolve_standalone_resource_policy(args)
     results_root = Path(args.results_root)
     results_root.mkdir(parents=True, exist_ok=True)
     jobs = load_jobs(args.manifest)
@@ -120,71 +174,93 @@ def main():
     print("Worker:", args.worker_id)
     print("Jobs in manifest:", len(jobs))
     print("Results root:", results_root)
+    print("Resource policy:", resource_policy.metadata())
 
-    for job in jobs:
-        if Path(args.pause_file).exists():
-            print("Pause file detected; stopping before next job.")
-            break
-        if args.max_jobs is not None and attempted >= args.max_jobs:
-            break
-        if not shard_matches(job["run_id"], args.shard_index, args.shard_count):
-            continue
-        if args.model_id and job["model"]["id"] not in args.model_id:
-            continue
-        resource_class = (job.get("requirements") or {}).get("resource_class")
-        if args.resource_class and resource_class not in args.resource_class:
-            continue
-        if args.wave and int(job.get("wave", 0)) not in args.wave:
-            continue
+    try:
+        for job in jobs:
+            try:
+                resource_policy.checkpoint("before_job_selection")
+            except ResourceYieldRequested as error:
+                print("Yielding shared resource:", error)
+                break
 
-        output_path = result_file(results_root, job["run_id"])
-        failed_path = results_root / "failed" / (job["run_id"] + ".json")
-        if result_is_complete(output_path, job["run_id"]):
-            continue
-        if failed_path.exists() and not args.retry_failed:
-            continue
+            if args.max_jobs is not None and attempted >= args.max_jobs:
+                break
+            if not shard_matches(job["run_id"], args.shard_index, args.shard_count):
+                continue
+            if args.model_id and job["model"]["id"] not in args.model_id:
+                continue
+            resource_class = (job.get("requirements") or {}).get("resource_class")
+            if args.resource_class and resource_class not in args.resource_class:
+                continue
+            if args.wave and int(job.get("wave", 0)) not in args.wave:
+                continue
 
-        attempted += 1
-        print(
-            "[%d] %s task=%s model=%s scaffold=%s repeat=%s"
-            % (
-                attempted,
-                job["run_id"],
-                job["task_id"],
-                job["model"]["id"],
-                job["scaffold"],
-                job["repeat"],
+            output_path = result_file(results_root, job["run_id"])
+            failed_path = results_root / "failed" / (job["run_id"] + ".json")
+            if result_is_complete(output_path, job["run_id"]):
+                continue
+            if failed_path.exists() and not args.retry_failed:
+                continue
+
+            attempted += 1
+            print(
+                "[%d] %s task=%s model=%s scaffold=%s repeat=%s"
+                % (
+                    attempted,
+                    job["run_id"],
+                    job["task_id"],
+                    job["model"]["id"],
+                    job["scaffold"],
+                    job["repeat"],
+                )
             )
-        )
 
-        try:
-            record = execute_job(job, results_root, args.worker_id)
-            atomic_write_json(output_path, record)
-            if failed_path.exists():
-                failed_path.unlink()
-            completed += 1
-            print("completed:", job["run_id"])
-        except KeyboardInterrupt:
-            print("Interrupted; current job was not marked complete.")
-            raise
-        except Exception as error:
-            failure = {
-                "schema_version": 1,
-                "status": "failed",
-                "run_id": job["run_id"],
-                "job": job,
-                "failed_at": utc_now_iso(),
-                "worker": worker_metadata(args.worker_id),
-                "error": str(error),
-                "traceback": traceback.format_exc(),
-            }
-            atomic_write_json(failed_path, failure)
-            print("failed:", error, file=sys.stderr)
-        finally:
-            if not args.keep_workspaces:
-                workspace = Path(".workspaces") / safe_name(job["run_id"])
-                if workspace.exists():
-                    shutil.rmtree(workspace, ignore_errors=True)
+            yielded = False
+            try:
+                record = execute_job(
+                    job,
+                    results_root,
+                    args.worker_id,
+                    resource_policy=resource_policy,
+                )
+                atomic_write_json(output_path, record)
+                if failed_path.exists():
+                    failed_path.unlink()
+                completed += 1
+                print("completed:", job["run_id"])
+            except ResourceYieldRequested as error:
+                yielded = True
+                print("Yielding during job; incomplete run will be retried:", error)
+            except KeyboardInterrupt:
+                print("Interrupted; current job was not marked complete.")
+                raise
+            except Exception as error:
+                failure = {
+                    "schema_version": 1,
+                    "status": "failed",
+                    "run_id": job["run_id"],
+                    "job": job,
+                    "failed_at": utc_now_iso(),
+                    "worker": worker_metadata(args.worker_id),
+                    "resource_policy": resource_policy.metadata(),
+                    "error": str(error),
+                    "traceback": traceback.format_exc(),
+                }
+                atomic_write_json(failed_path, failure)
+                print("failed:", error, file=sys.stderr)
+            finally:
+                if not args.keep_workspaces:
+                    workspace = Path(".workspaces") / safe_name(job["run_id"])
+                    if workspace.exists():
+                        shutil.rmtree(workspace, ignore_errors=True)
+
+            if yielded:
+                break
+    finally:
+        release_code = resource_policy.release()
+        if release_code not in (None, 0):
+            print("Resource release command returned:", release_code)
 
     print("Attempted:", attempted)
     print("Completed now:", completed)
