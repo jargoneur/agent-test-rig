@@ -74,11 +74,12 @@ class Scaffold(UpstreamScaffold):
             "agentless_localization",
             "get_repo_structure.get_repo_structure",
         )
-        self._localized_context: Dict[str, str] = {}
+        self._localized_context: Dict[str, Dict[str, Any]] = {}
 
     @contextlib.contextmanager
     def _patched_model_factory(self):
-        original = self.model_module.make_model
+        original_model_factory = self.model_module.make_model
+        original_fl_factory = self.fl_module.make_model
 
         def make_model(
             model,
@@ -98,22 +99,24 @@ class Scaffold(UpstreamScaffold):
             )
 
         self.model_module.make_model = make_model
+        self.fl_module.make_model = make_model
         try:
             yield
         finally:
-            self.model_module.make_model = original
+            self.model_module.make_model = original_model_factory
+            self.fl_module.make_model = original_fl_factory
 
     @staticmethod
     def _normalise_path(path: str, repo_root: Path) -> str:
         candidate = repo_root / path
         if candidate.exists():
-            return path
+            return Path(path).as_posix()
         parts = Path(path).parts
         if len(parts) > 1:
-            stripped = str(Path(*parts[1:]))
+            stripped = Path(*parts[1:]).as_posix()
             if (repo_root / stripped).exists():
                 return stripped
-        return path
+        return Path(path).as_posix()
 
     def _build_localized_context(self, issue, tools):
         key = str(tools.repo_path)
@@ -152,17 +155,19 @@ class Scaffold(UpstreamScaffold):
                 )
 
         snippets: List[str] = []
+        context_files: List[str] = []
+        context_spans: Dict[str, List[Dict[str, int]]] = {}
         file_contents = self.preprocess.get_repo_files(structure, found_files) if found_files else {}
-        for upstream_path in found_files:
-            display_path = self._normalise_path(upstream_path, tools.repo_path)
-            content = file_contents.get(upstream_path, "")
-            locs = found_locs.get(upstream_path, []) if isinstance(found_locs, dict) else []
+        for upstream_file in found_files:
+            display_path = self._normalise_path(upstream_file, tools.repo_path)
+            content = file_contents.get(upstream_file, "")
+            locs = found_locs.get(upstream_file, []) if isinstance(found_locs, dict) else []
             intervals = []
             if locs:
                 _raw, intervals = self.preprocess.transfer_arb_locs_to_locs(
                     locs,
                     structure,
-                    upstream_path,
+                    upstream_file,
                     context_window=context_window,
                     loc_interval=True,
                     file_content=content,
@@ -174,20 +179,41 @@ class Scaffold(UpstreamScaffold):
                 sticky_scroll=True,
             )
             snippets.append("### %s\n%s" % (display_path, rendered))
+            context_files.append(display_path)
+            if intervals:
+                context_spans[display_path] = [
+                    {"start": int(start), "end": int(end)}
+                    for start, end in intervals
+                ]
+            elif content:
+                context_spans[display_path] = [
+                    {"start": 1, "end": max(1, len(content.splitlines()))}
+                ]
 
-        if not snippets:
-            context = "Agentless returned no valid localization for this task."
-        else:
-            context = "\n\n".join(snippets)
-        self._localized_context[key] = context
-        return context
+        context = (
+            "\n\n".join(snippets)
+            if snippets
+            else "Agentless returned no valid localization for this task."
+        )
+        value = {
+            "text": context,
+            "files": context_files,
+            "spans": context_spans,
+        }
+        self._localized_context[key] = value
+        return value
 
     def init_state(self, issue, tools):
         state = super().init_state(issue, tools)
-        context = self._build_localized_context(issue, tools)
-        state["agentless_context_characters"] = len(context)
+        localized = self._build_localized_context(issue, tools)
+        state["agentless_context_characters"] = len(localized["text"])
+        state["context_files"] = list(localized["files"])
+        state["context_spans"] = dict(localized["spans"])
         state["auxiliary_calls"] = list(self.auxiliary_calls)
         return state
 
     def repository_context(self, issue, tools, history, state):
-        return self._build_localized_context(issue, tools)
+        localized = self._build_localized_context(issue, tools)
+        state["context_files"] = list(localized["files"])
+        state["context_spans"] = dict(localized["spans"])
+        return localized["text"]
