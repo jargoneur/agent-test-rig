@@ -35,12 +35,25 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 uv python install "$PYTHON_VERSION" "$EVAL_PYTHON_VERSION"
-if [[ ! -x .venv/bin/python ]]; then
-    uv venv --python "$PYTHON_VERSION" .venv
-fi
-if [[ ! -x .venv-contextbench/bin/python ]]; then
-    uv venv --python "$EVAL_PYTHON_VERSION" .venv-contextbench
-fi
+
+ensure_venv() {
+    local path="$1"
+    local requested="$2"
+    local current=""
+    if [[ -x "$path/bin/python" ]]; then
+        current="$($path/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    fi
+    if [[ "$current" != "$requested" ]]; then
+        if [[ -d "$path" ]]; then
+            echo "Recreating $path: Python ${current:-unknown} -> $requested"
+            rm -rf "$path"
+        fi
+        uv venv --python "$requested" "$path"
+    fi
+}
+
+ensure_venv .venv "$PYTHON_VERSION"
+ensure_venv .venv-contextbench "$EVAL_PYTHON_VERSION"
 
 uv pip install --python .venv/bin/python -r requirements/core.txt
 uv pip install --python .venv-contextbench/bin/python -r requirements/contextbench-eval.txt
