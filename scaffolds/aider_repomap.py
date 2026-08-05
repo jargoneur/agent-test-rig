@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from harness.upstreams import import_upstream
 from scaffolds.upstream_base import AiderIOShim, AiderModelShim, UpstreamScaffold
@@ -48,7 +47,8 @@ class Scaffold(UpstreamScaffold):
         return instance
 
     def repository_context(self, issue, tools, history, state):
-        files = [str((tools.repo_path / name).resolve()) for name in tools.list_files()]
+        relative_files = tools.list_files()
+        files = [str((tools.repo_path / name).resolve()) for name in relative_files]
         mentioned_fnames = set(_FILE.findall(issue))
         mentioned_idents = set(_IDENTIFIER.findall(issue))
         for item in history:
@@ -65,4 +65,14 @@ class Scaffold(UpstreamScaffold):
         )
         if not repo_map:
             raise RuntimeError("Frozen Aider RepoMap returned no repository map")
+
+        normalized_map = repo_map.replace("\\", "/")
+        exposed = [
+            path
+            for path in relative_files
+            if path in normalized_map
+            or path.rsplit("/", 1)[-1] in normalized_map
+        ]
+        state["context_files"] = exposed
+        state["context_spans"] = {}
         return repo_map
