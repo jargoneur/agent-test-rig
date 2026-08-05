@@ -30,3 +30,4 @@ jobs:
           test_scheduler_store.py
           test_model_adapter.py
           test_model_profiles.py
+          test_resource_policy.py
