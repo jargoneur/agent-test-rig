@@ -28,6 +28,25 @@ automatic interest-management system is available. Plato therefore runs in
 observable and obeys a direct stop request. The harness does not claim automatic
 preemption.
 
+## Plato single-model storage rule
+
+Only one model artifact is stored on Plato at a time. This is a Plato disk-space
+policy, not a global distributed-execution restriction.
+
+Consequences:
+
+- `MODEL_IDS` on Plato must contain exactly one model ID;
+- the same selected GGUF may be loaded by one or more Plato GPUs concurrently;
+- other computers may store or execute different models at the same time;
+- the scheduler database may contain pending blocks for all eleven models;
+- after the selected model's Plato blocks are complete and the scheduler is
+  stopped/backed up, its GGUF may be removed and replaced by the next model;
+- registry and provenance records are preserved even when an old GGUF is
+  removed.
+
+The Plato launcher validates this rule and refuses to start if another
+registered GGUF is still present.
+
 ## 1. Checkout and bootstrap on Plato
 
 ```bash
@@ -80,7 +99,28 @@ python scripts/provision_gguf.py \
 
 This downloads the exact checkpoint, converts it with pinned llama.cpp,
 quantizes it to Q8_0, records provenance and writes a SHA-256 registry entry.
-The smoke deployment does not freeze the final scientific profile by itself.
+The source snapshot and F16 intermediate are removed after successful
+provisioning. The smoke deployment does not freeze the final scientific profile
+by itself.
+
+Before starting Plato, validate the single-model slot:
+
+```bash
+python scripts/plato_model_slot.py \
+  --registry model_artifacts/registry.yml \
+  --keep-model-id qwen3_5_0_8b
+```
+
+If another registered GGUF is present, the command reports it and exits without
+deleting anything. Only after completed results and scheduler backups have been
+confirmed, explicitly remove other registered artifacts:
+
+```bash
+python scripts/plato_model_slot.py \
+  --registry model_artifacts/registry.yml \
+  --keep-model-id qwen3_5_0_8b \
+  --remove-other-artifacts
+```
 
 ## 3. Full preflight
 
@@ -130,9 +170,11 @@ export PLATO_WORKERS=1
 bash scripts/start_plato.sh jobs/contextbench_distributed_smoke.jsonl
 ```
 
-`PLATO_WORKERS` defaults to `1`. Increase it only after the one-GPU smoke has
-passed and the operator deliberately chooses to use more GPUs. Each worker is
-bound to one GPU UUID and one managed llama-server port.
+`MODEL_IDS` must be exactly one model ID on Plato. `PLATO_WORKERS` defaults to
+`1`. Increase it only after the one-GPU smoke has passed and the operator
+deliberately chooses to use more GPUs. Multiple Plato workers may load the same
+selected GGUF on different GPUs; they still satisfy the one-artifact storage
+rule.
 
 The scheduler:
 
@@ -150,6 +192,9 @@ Status:
 ```bash
 bash scripts/status_plato.sh
 ```
+
+The status output includes per-model pending, leased, completed and failed block
+counts. Do not retire a Plato model while it has leased blocks.
 
 Explicit scheduler controls:
 
@@ -187,7 +232,36 @@ The stop procedure centrally pauses the queue, signals workers, requests a
 backup, then stops the scheduler. The scheduler also attempts a final shutdown
 backup. Completed runs remain stored; incomplete leases return to the queue.
 
-## 6. Recover the scheduler database
+## 6. Switch Plato to the next model
+
+After the current model's desired blocks are complete:
+
+1. inspect per-model status;
+2. stop Plato gracefully;
+3. confirm the pre-stop/shutdown backup exists;
+4. provision or copy the next model;
+5. remove the previous registered GGUF explicitly while keeping the next one;
+6. run preflight for the next model;
+7. restart with `MODEL_IDS` set to the next model ID.
+
+Example after `qwen3_5_2b` has been provisioned:
+
+```bash
+python scripts/plato_model_slot.py \
+  --registry model_artifacts/registry.yml \
+  --keep-model-id qwen3_5_2b \
+  --remove-other-artifacts
+
+export MODEL_IDS=qwen3_5_2b
+export SCHEDULER_DB=scheduler/contextbench_core.sqlite3
+bash scripts/start_plato.sh jobs/contextbench_core.jsonl
+```
+
+The same scheduler database can continue across model changes. Completed blocks
+remain immutable; workers advertising the new single model claim only compatible
+pending blocks.
+
+## 7. Recover the scheduler database
 
 The scheduler performs a full integrity check at startup and refuses to run a
 corrupt database. Restore only while the scheduler is stopped.
@@ -210,7 +284,7 @@ SQLite is sufficient for the current queue size. The protection required here
 is consistent backup and restart recovery, not replacement with a larger
 database system.
 
-## 7. Attach an additional PC
+## 8. Attach an additional PC
 
 Keep the central scheduler local to Plato and open one SSH tunnel per remote
 machine:
@@ -218,6 +292,10 @@ machine:
 ```bash
 ssh -N -L 8877:127.0.0.1:8787 jaron@10.50.200.80
 ```
+
+A remote machine is not subject to Plato's one-artifact storage policy. It may
+store and advertise any locally verified model set allowed by its own storage
+and hardware envelope.
 
 Synchronize exact model artifacts with resumable `rsync` and SHA-256 validation:
 
@@ -251,7 +329,7 @@ instead of using `local_exclusive`. A worker advertises only artifacts that
 exist locally and match the recorded SHA-256. Scheduler eligibility requires
 both the concrete model ID and any declared resource class.
 
-## 8. Export and evaluate results
+## 9. Export and evaluate results
 
 After stopping the smoke system:
 
@@ -272,7 +350,7 @@ python scripts/evaluate_contextbench.py \
 Evaluation is performed independently for every model × scaffold × repeat
 condition by the pinned ContextBench evaluator.
 
-## 9. Scientific core
+## 10. Scientific core
 
 The binding base experiment contains two complete selected instruction-tuned
 families:
