@@ -16,6 +16,7 @@ class SimpleAgent:
         max_steps=8,
         expected_files=None,
         run_seed=None,
+        resource_policy=None,
     ):
         self.model = model
         self.tools = tools
@@ -24,7 +25,12 @@ class SimpleAgent:
         self.max_steps = max_steps
         self.expected_files = set(expected_files or [])
         self.run_seed = run_seed
+        self.resource_policy = resource_policy
         self.files_read = set()
+
+    def _resource_checkpoint(self, label):
+        if self.resource_policy is not None:
+            self.resource_policy.checkpoint(label)
 
     def parse_action(self, response):
         response = response.strip()
@@ -106,6 +112,7 @@ class SimpleAgent:
             return False
 
     def run(self, issue):
+        self._resource_checkpoint("before_repository_reset")
         reset_result = self.tools.reset_repo()
         if not reset_result.get("success"):
             raise RuntimeError(
@@ -146,6 +153,7 @@ class SimpleAgent:
         )
 
         for step in range(1, self.max_steps + 1):
+            self._resource_checkpoint("step_%d_before_prompt" % step)
             context = self.scaffold.build_context(issue, self.tools, history, state)
             step_seed = (
                 derive_step_seed(self.run_seed, step)
@@ -166,6 +174,7 @@ class SimpleAgent:
                 },
             )
 
+            self._resource_checkpoint("step_%d_before_model_call" % step)
             response = self.model.generate(context, seed=step_seed)
 
             self.logger.log(
@@ -177,6 +186,7 @@ class SimpleAgent:
                     "generation_metadata": self.model.last_generation_metadata,
                 },
             )
+            self._resource_checkpoint("step_%d_after_model_call" % step)
 
             parsed_successfully = False
             try:
@@ -225,6 +235,7 @@ class SimpleAgent:
                     first_test_step = step
 
                 try:
+                    self._resource_checkpoint("step_%d_before_action" % step)
                     observation = self.execute_action(action)
                 except Exception as error:
                     execution_errors += 1
@@ -270,6 +281,7 @@ class SimpleAgent:
                 self.logger.log("auto_finish", {"step": step, "reason": "tests passed"})
                 break
 
+        self._resource_checkpoint("before_final_tests")
         final_tests = self.tools.run_tests("pytest")
 
         diagnostics = {
