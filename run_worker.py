@@ -278,7 +278,7 @@ def main():
                     "run_id": job["run_id"],
                     "job": job,
                     "failed_at": utc_now_iso(),
-                    "worker": worker_metadata(worker_id),
+                    "worker": worker_metadata(args.worker_id),
                     "resource_policy": resource_policy.metadata(),
                     "error": str(error),
                     "traceback": traceback.format_exc(),
