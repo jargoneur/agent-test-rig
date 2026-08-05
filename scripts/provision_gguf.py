@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import yaml
 from huggingface_hub import HfApi, snapshot_download
@@ -17,6 +17,7 @@ from huggingface_hub import HfApi, snapshot_download
 ROOT = Path(__file__).resolve().parents[1]
 LLAMA_CPP = ROOT / ".upstreams" / "llama.cpp"
 DEFAULT_REGISTRY = ROOT / "model_artifacts" / "registry.yml"
+GIB = 1024 ** 3
 
 
 def sha256_file(path: Path) -> str:
@@ -45,6 +46,55 @@ def run(command, cwd=None):
     subprocess.run([str(value) for value in command], cwd=cwd, check=True)
 
 
+def repository_size_bytes(info: Any) -> Optional[int]:
+    sizes = []
+    for sibling in getattr(info, "siblings", None) or []:
+        size = getattr(sibling, "size", None)
+        if isinstance(size, int) and size >= 0:
+            sizes.append(size)
+    if not sizes:
+        return None
+    return sum(sizes)
+
+
+def check_storage(
+    output_root: Path,
+    estimated_required_bytes: Optional[int],
+    reserve_gib: float,
+) -> Dict[str, Any]:
+    usage = shutil.disk_usage(output_root)
+    reserve_bytes = max(0, int(reserve_gib * GIB))
+    report = {
+        "filesystem_free_gib": round(usage.free / GIB, 3),
+        "storage_reserve_gib": reserve_gib,
+        "estimated_required_gib": (
+            round(estimated_required_bytes / GIB, 3)
+            if estimated_required_bytes is not None
+            else None
+        ),
+        "estimate_rule": "snapshot_metadata_times_2.75_plus_reserve",
+    }
+    if estimated_required_bytes is not None:
+        required_with_reserve = estimated_required_bytes + reserve_bytes
+        if usage.free < required_with_reserve:
+            raise RuntimeError(
+                "Insufficient free storage: %.3f GiB available, approximately %.3f GiB "
+                "required plus %.3f GiB reserve"
+                % (
+                    usage.free / GIB,
+                    estimated_required_bytes / GIB,
+                    reserve_gib,
+                )
+            )
+    elif usage.free < reserve_bytes:
+        raise RuntimeError(
+            "Filesystem free space %.3f GiB is below the %.3f GiB reserve"
+            % (usage.free / GIB, reserve_gib)
+        )
+    print("Storage preflight:", json.dumps(report, sort_keys=True), flush=True)
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Provision one pinned Hugging Face checkpoint as a Q8_0 GGUF."
@@ -68,6 +118,27 @@ def main() -> None:
         "--existing-gguf",
         help="Register an already-created Q8_0 GGUF instead of downloading/converting",
     )
+    parser.add_argument(
+        "--storage-reserve-gib",
+        type=float,
+        default=5.0,
+        help="Free storage that must remain beyond the estimated conversion peak.",
+    )
+    parser.add_argument(
+        "--skip-storage-check",
+        action="store_true",
+        help="Skip the conservative free-space estimate.",
+    )
+    parser.add_argument(
+        "--keep-source-snapshot",
+        action="store_true",
+        help="Retain the downloaded Hugging Face snapshot after successful conversion.",
+    )
+    parser.add_argument(
+        "--keep-failed-intermediates",
+        action="store_true",
+        help="Retain downloaded/F16 intermediates after a failed conversion.",
+    )
     args = parser.parse_args()
 
     revision = args.revision.strip()
@@ -79,7 +150,7 @@ def main() -> None:
         repo_id=args.model_id,
         revision=revision,
         token=args.token,
-        files_metadata=False,
+        files_metadata=True,
     )
     resolved_revision = str(info.sha)
     if resolved_revision.lower() != revision.lower():
@@ -89,16 +160,33 @@ def main() -> None:
         )
 
     output_root = Path(args.output_root).expanduser().resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
     model_dir = output_root / args.profile_key
     model_dir.mkdir(parents=True, exist_ok=True)
     final_path = model_dir / (args.profile_key + "-Q8_0.gguf")
+    partial_final = final_path.with_suffix(final_path.suffix + ".partial")
+    partial_final.unlink(missing_ok=True)
+
+    snapshot = model_dir / "hf_snapshot"
+    f16_path = model_dir / (args.profile_key + "-F16.gguf")
+    storage_report: Dict[str, Any] = {}
+    conversion_succeeded = False
 
     if args.existing_gguf:
         source = Path(args.existing_gguf).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(source)
+        if not args.skip_storage_check:
+            estimated = source.stat().st_size if source != final_path else 0
+            storage_report = check_storage(
+                output_root,
+                estimated,
+                args.storage_reserve_gib,
+            )
         if source != final_path:
-            shutil.copy2(source, final_path)
+            shutil.copy2(source, partial_final)
+            os.replace(str(partial_final), str(final_path))
+        conversion_succeeded = True
     else:
         converter = LLAMA_CPP / "convert_hf_to_gguf.py"
         quantizer = LLAMA_CPP / "build" / "bin" / "llama-quantize"
@@ -111,27 +199,47 @@ def main() -> None:
                 "llama-quantize is missing; run scripts/bootstrap.sh"
             )
 
-        snapshot = model_dir / "hf_snapshot"
-        snapshot_download(
-            repo_id=args.model_id,
-            revision=revision,
-            local_dir=str(snapshot),
-            token=args.token,
+        snapshot_size = repository_size_bytes(info)
+        estimated_peak = (
+            int(snapshot_size * 2.75) if snapshot_size is not None else None
         )
-        f16_path = model_dir / (args.profile_key + "-F16.gguf")
-        run(
-            [
-                str(ROOT / ".venv" / "bin" / "python"),
-                str(converter),
-                str(snapshot),
-                "--outfile",
-                str(f16_path),
-                "--outtype",
-                "f16",
-            ]
-        )
-        run([str(quantizer), str(f16_path), str(final_path), "Q8_0"])
-        f16_path.unlink(missing_ok=True)
+        if not args.skip_storage_check:
+            storage_report = check_storage(
+                output_root,
+                estimated_peak,
+                args.storage_reserve_gib,
+            )
+
+        try:
+            snapshot_download(
+                repo_id=args.model_id,
+                revision=revision,
+                local_dir=str(snapshot),
+                token=args.token,
+            )
+            run(
+                [
+                    str(ROOT / ".venv" / "bin" / "python"),
+                    str(converter),
+                    str(snapshot),
+                    "--outfile",
+                    str(f16_path),
+                    "--outtype",
+                    "f16",
+                ]
+            )
+            run([str(quantizer), str(f16_path), str(partial_final), "Q8_0"])
+            os.replace(str(partial_final), str(final_path))
+            conversion_succeeded = True
+        finally:
+            partial_final.unlink(missing_ok=True)
+            if conversion_succeeded or not args.keep_failed_intermediates:
+                f16_path.unlink(missing_ok=True)
+                if snapshot.exists() and not args.keep_source_snapshot:
+                    shutil.rmtree(snapshot)
+
+    if not final_path.is_file():
+        raise RuntimeError("Provisioning did not produce the final GGUF: %s" % final_path)
 
     digest = sha256_file(final_path)
     registry_path = Path(args.registry).expanduser().resolve()
@@ -163,13 +271,15 @@ def main() -> None:
     )
 
     provenance = {
-        "schema_version": 1,
+        "schema_version": 2,
         "profile_key": args.profile_key,
         "upstream_model_id": args.model_id,
         "upstream_revision": resolved_revision,
         "artifact": str(final_path),
         "artifact_sha256": digest,
         "quantization": "Q8_0",
+        "source_snapshot_retained": bool(args.keep_source_snapshot and snapshot.exists()),
+        "storage_preflight": storage_report,
         "llama_cpp_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=LLAMA_CPP, text=True
         ).strip(),
@@ -183,6 +293,8 @@ def main() -> None:
     print("Artifact:", final_path)
     print("SHA-256:", digest)
     print("Registry:", registry_path)
+    if not args.keep_source_snapshot:
+        print("Source snapshot and F16 intermediate removed after success.")
 
 
 if __name__ == "__main__":
