@@ -1,15 +1,15 @@
-schema_version: 3
-status: family_plan_restored_pending_gemma4_clarification
-frozen_at: "2026-08-05"
+schema_version: 4
+status: family_membership_fixed_profiles_pending
+frozen_at: "2026-08-06"
 policy_document: docs/model_inference_policy.md
 selection_document: docs/model_selection.md
 
 selection_rule:
-  source: supervisor_recommendation
-  target_model_count: 10
+  source: user_protocol_decision_two_complete_families
+  target_model_count: 11
   families:
     qwen3_5: 6
-    gemma4: 4
+    gemma4: 5
   official_sources_only: true
   unofficial_presets_allowed: false
   local_tuning_allowed: false
@@ -33,121 +33,115 @@ common_protocol_limits:
   max_new_tokens_per_action: 2048
 
 runtime:
-  backend: pending_validation
+  backend: llama_cpp_pending_checkpoint_validation
   backend_revision: pending_validation
   target_quantization: int8
   artifact_rule: one_identical_hashed_artifact_per_model_on_every_worker
+  advertise_only_locally_verified_artifacts: true
+
+profile_defaults: &pending_profile
+  model_revision: pending_resolution
+  generation_profile_status: pending_official_extraction
+  resolved_generation_options: {}
+  model_artifact_sha256: pending_download
+  tokenizer_sha256: pending_download
+  chat_template_sha256: pending_download
+  quantized_artifact_sha256: pending_quantization
+  profile_sha256: pending_resolution
+  measured_peak_vram_gib: pending_measurement
+  deployment_status: pending_validation
 
 models:
   qwen3_5_0_8b:
+    <<: *pending_profile
     model_id: Qwen/Qwen3.5-0.8B
-    model_revision: pending_resolution
     family: qwen3.5
     architecture: dense
     parameters_billion: 0.8
-    generation_profile_status: pending_official_extraction
-    resolved_generation_options: {}
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
 
   qwen3_5_2b:
+    <<: *pending_profile
     model_id: Qwen/Qwen3.5-2B
-    model_revision: pending_resolution
     family: qwen3.5
     architecture: dense
     parameters_billion: 2
-    generation_profile_status: pending_official_extraction
-    resolved_generation_options: {}
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
 
   qwen3_5_4b:
+    <<: *pending_profile
     model_id: Qwen/Qwen3.5-4B
-    model_revision: pending_resolution
     family: qwen3.5
     architecture: dense
     parameters_billion: 4
-    generation_profile_status: pending_official_extraction
-    resolved_generation_options: {}
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
 
   qwen3_5_9b:
+    <<: *pending_profile
     model_id: Qwen/Qwen3.5-9B
-    model_revision: pending_resolution
     family: qwen3.5
     architecture: dense
     parameters_billion: 9
-    generation_profile_status: pending_official_extraction
-    resolved_generation_options: {}
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
 
   qwen3_5_27b:
+    <<: *pending_profile
     model_id: Qwen/Qwen3.5-27B
-    model_revision: pending_resolution
     family: qwen3.5
     architecture: dense
     parameters_billion: 27
-    generation_profile_status: pending_official_extraction
-    resolved_generation_options: {}
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
 
   qwen3_5_35b_a3b:
+    <<: *pending_profile
     model_id: Qwen/Qwen3.5-35B-A3B
-    model_revision: pending_resolution
     family: qwen3.5
     architecture: mixture_of_experts
     parameters_billion_total: 35
     parameters_billion_active: 3
-    generation_profile_status: pending_official_extraction
-    resolved_generation_options: {}
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
 
-unresolved_family_slots:
-  gemma4:
-    required_count: 4
-    supervisor_description: "four sizes, three MoE"
-    official_current_candidates:
-      - google/gemma-4-E2B-it
-      - google/gemma-4-E4B-it
-      - google/gemma-4-12B-it
-      - google/gemma-4-26B-A4B-it
-      - google/gemma-4-31B-it
-    official_current_moe_candidates:
-      - google/gemma-4-26B-A4B-it
-    resolution_required: true
+  gemma4_e2b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-E2B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: E2B
+
+  gemma4_e4b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-E4B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: E4B
+
+  gemma4_12b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-12B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: 12B
+
+  gemma4_26b_a4b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-26B-A4B-it
+    family: gemma4
+    architecture: mixture_of_experts
+    parameters_label: 26B-A4B
+
+  gemma4_31b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-31B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: 31B
 
 validation_gate:
   benchmark_runs_allowed: false
+  validation_smokes_allowed: true
   unblock_when:
-    - exact_four_gemma4_checkpoints_are_confirmed
-    - every_source_revision_resolves
+    - all_eleven_source_revisions_resolve
     - official_generation_profiles_are_recorded
     - every_model_and_tokenizer_hash_is_recorded
     - every_chat_template_hash_is_recorded
     - int8_artifacts_are_validated
     - fp16_kv_cache_is_validated
-    - measured_peak_vram_including_prefill_fits_32_gib_with_margin
+    - measured_peak_vram_including_prefill_is_recorded
+    - deployment_constraints_are_explicitly_resolved
     - every_quantized_artifact_hash_is_recorded
     - every_profile_hash_is_recorded
+    - distributed_current_head_smoke_passes
