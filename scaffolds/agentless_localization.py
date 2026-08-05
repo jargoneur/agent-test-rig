@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import subprocess
+import tarfile
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -107,6 +110,31 @@ class Scaffold(UpstreamScaffold):
             self.fl_module.make_model = original_fl_factory
 
     @staticmethod
+    @contextlib.contextmanager
+    def _tracked_source_snapshot(repo_root: Path):
+        """Expose exactly the tracked base tree without `.git` or cache files."""
+        with tempfile.TemporaryDirectory(prefix="agentless-source-") as temporary:
+            temporary_root = Path(temporary)
+            archive = temporary_root / "source.tar"
+            source = temporary_root / "source"
+            source.mkdir()
+            result = subprocess.run(
+                ["git", "archive", "--format=tar", "HEAD", "-o", str(archive)],
+                cwd=repo_root,
+                text=True,
+                capture_output=True,
+                timeout=300,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    "Cannot create tracked source snapshot for Agentless: %s"
+                    % result.stderr.strip()
+                )
+            with tarfile.open(archive, "r") as handle:
+                handle.extractall(source, filter="data")
+            yield source
+
+    @staticmethod
     def _normalise_path(path: str, repo_root: Path) -> str:
         candidate = repo_root / path
         if candidate.exists():
@@ -118,16 +146,7 @@ class Scaffold(UpstreamScaffold):
                 return stripped
         return Path(path).as_posix()
 
-    def _build_localized_context(self, issue, tools):
-        key = str(tools.repo_path)
-        if key in self._localized_context:
-            return self._localized_context[key]
-
-        structure = self.structure_module.create_structure(key)
-        self.preprocess.filter_none_python(structure)
-        if bool(self.options.get("exclude_tests", True)):
-            self.preprocess.filter_out_test_files(structure)
-
+    def _localize_structure(self, structure, issue, tools):
         logger = logging.getLogger("agentless.%s" % self.task.get("instance_id", "task"))
         logger.addHandler(logging.NullHandler())
         fl = self.fl_module.LLMFL(
@@ -195,11 +214,24 @@ class Scaffold(UpstreamScaffold):
             if snippets
             else "Agentless returned no valid localization for this task."
         )
-        value = {
+        return {
             "text": context,
             "files": context_files,
             "spans": context_spans,
         }
+
+    def _build_localized_context(self, issue, tools):
+        key = str(tools.repo_path)
+        if key in self._localized_context:
+            return self._localized_context[key]
+
+        with self._tracked_source_snapshot(tools.repo_path) as source:
+            structure = self.structure_module.create_structure(str(source))
+            self.preprocess.filter_none_python(structure)
+            if bool(self.options.get("exclude_tests", True)):
+                self.preprocess.filter_out_test_files(structure)
+            value = self._localize_structure(structure, issue, tools)
+
         self._localized_context[key] = value
         return value
 
