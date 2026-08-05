@@ -1,5 +1,9 @@
-experiment_id: contextbench_qwen3_5_core
-manifest: jobs/contextbench_qwen3_5_core.jsonl
+# Operationally complete six-model queue. This is deliberately validation-only
+# until exact checkpoint revisions, hashes, chat/thinking modes, and official
+# per-checkpoint generation profiles are frozen in model_profiles.lock.yml.
+protocol_status: provisional_validation_only
+experiment_id: contextbench_qwen3_5_provisional_validation
+manifest: jobs/contextbench_qwen3_5_provisional_validation.jsonl
 
 task_source:
   type: contextbench
