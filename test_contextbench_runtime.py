@@ -124,7 +124,7 @@ def test_llama_cpp_registry_builds_a_single_gpu_server_command(tmp_path):
     command = manager._command("model-a", entry)
 
     assert manager.model_ids() == ["model-a"]
-    assert command[0] == "/bin/true"
+    assert Path(command[0]) == Path("/bin/true").resolve()
     assert command[command.index("--ctx-size") + 1] == "8192"
     assert command[command.index("--split-mode") + 1] == "none"
     assert command[command.index("--alias") + 1] == "model-a"
