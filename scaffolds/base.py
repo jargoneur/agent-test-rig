@@ -52,6 +52,9 @@ class BaseScaffold:
     def scaffold_context_for_prompt(self, issue, tools, history, state):
         return self.scaffold_context
 
+    def _tests_enabled(self):
+        return bool(self.task.get("tests_enabled", self.task.get("run_final_tests", True)))
+
     def _test_command(self):
         return str(self.task.get("test_command") or "pytest")
 
@@ -69,7 +72,16 @@ class BaseScaffold:
             history,
             state,
         )
-        test_command = self._test_command()
+        test_instruction = ""
+        test_action = ""
+        if self._tests_enabled():
+            test_instruction = (
+                "- Run the configured validation command after changing code when it is available.\n"
+            )
+            test_action = (
+                '{"action": "run_tests", "command": %s}\n'
+                % json.dumps(self._test_command())
+            )
 
         return f"""
 You are a coding agent working in an existing software repository.
@@ -98,15 +110,13 @@ Protocol:
 - Read an existing file before attempting to overwrite it.
 - Preserve existing public interfaces unless the task explicitly requires changing them.
 - Prefer narrow file ranges and targeted search over reading entire large files.
-- Run the configured validation command after changing code when it is available.
-
+{test_instruction}
 Allowed actions:
 {{"action": "list_files", "glob": "**/*.py", "limit": 200}}
 {{"action": "search_text", "query": "symbol_or_text", "glob": "**/*.py", "limit": 50}}
 {{"action": "read_file", "path": "src/example.py", "start_line": 1, "end_line": 200}}
 {{"action": "write_file", "path": "src/example.py", "content": "complete file content with escaped newlines"}}
-{{"action": "run_tests", "command": {json.dumps(test_command)}}}
-{{"action": "finish", "reason": "implementation complete"}}
+{test_action}{{"action": "finish", "reason": "implementation complete"}}
 
 Choose the next action.
 """
