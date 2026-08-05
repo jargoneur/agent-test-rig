@@ -65,6 +65,7 @@ class LlamaCppServerManager:
         self.active_model_id: Optional[str] = None
         self.active_runtime: Optional[Dict[str, Any]] = None
         self.registry = self._load_registry()
+        self._verified_entries: Dict[str, Dict[str, Any]] = {}
 
     def _load_registry(self) -> Dict[str, Dict[str, Any]]:
         if not self.registry_path.is_file():
@@ -84,10 +85,29 @@ class LlamaCppServerManager:
             models[str(model_id)] = entry
         return models
 
-    def model_ids(self):
-        return sorted(self.registry)
+    def model_ids(self, verify: bool = False):
+        model_ids = sorted(self.registry)
+        if not verify:
+            return model_ids
+        verified = []
+        failures = []
+        for model_id in model_ids:
+            try:
+                self._entry(model_id)
+                verified.append(model_id)
+            except Exception as error:
+                failures.append("%s: %s" % (model_id, error))
+        if failures:
+            raise RuntimeError(
+                "Worker model registry contains unavailable artifacts:\n- "
+                + "\n- ".join(failures)
+            )
+        return verified
 
     def _entry(self, model_id: str) -> Dict[str, Any]:
+        cached = self._verified_entries.get(model_id)
+        if cached is not None:
+            return dict(cached)
         try:
             entry = dict(self.registry[model_id])
         except KeyError as error:
@@ -97,14 +117,17 @@ class LlamaCppServerManager:
             raise FileNotFoundError(
                 "GGUF artifact for %s is missing: %s" % (model_id, artifact)
             )
-        expected = str(entry.get("sha256") or "").strip()
-        if expected:
-            actual = sha256_file(artifact)
-            if actual != expected:
-                raise RuntimeError(
-                    "GGUF hash mismatch for %s: %s != %s"
-                    % (model_id, actual, expected)
-                )
+        expected = str(entry.get("sha256") or "").strip().lower()
+        if not expected:
+            raise RuntimeError("GGUF sha256 is missing for %s" % model_id)
+        actual = sha256_file(artifact).lower()
+        if actual != expected:
+            raise RuntimeError(
+                "GGUF hash mismatch for %s: %s != %s"
+                % (model_id, actual, expected)
+            )
+        entry["sha256"] = actual
+        self._verified_entries[model_id] = dict(entry)
         return entry
 
     def _base_url(self) -> str:
