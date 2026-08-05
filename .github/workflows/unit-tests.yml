@@ -31,3 +31,4 @@ jobs:
           test_model_adapter.py
           test_model_profiles.py
           test_resource_policy.py
+          test_worker_configs.py
