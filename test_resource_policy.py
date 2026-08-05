@@ -50,6 +50,32 @@ def test_shared_worker_requires_written_verification_reference():
         )
 
 
+def test_manual_operator_mode_requires_explicit_acknowledgement(tmp_path):
+    with pytest.raises(ValueError, match="operator_acknowledgement"):
+        ResourcePolicy(
+            {
+                "shared_resource": True,
+                "other_users_priority": True,
+                "mode": "manual_operator",
+                "release_managed_externally": True,
+                "pause_file": str(tmp_path / "PAUSE"),
+            }
+        )
+
+    policy = ResourcePolicy(
+        {
+            "shared_resource": True,
+            "other_users_priority": True,
+            "mode": "manual_operator",
+            "operator_acknowledgement": "operator_started_manually",
+            "release_managed_externally": True,
+            "pause_file": str(tmp_path / "PAUSE"),
+        }
+    )
+    policy.checkpoint("test")
+    assert policy.metadata()["mode"] == "manual_operator"
+
+
 def test_shared_worker_requires_a_release_mechanism():
     with pytest.raises(ValueError, match="release_command"):
         ResourcePolicy(
