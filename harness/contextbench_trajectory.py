@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def _append_span(spans: Dict[str, List[Dict[str, int]]], path: str, start: int, end: int):
@@ -26,6 +26,7 @@ def build_contextbench_trajectory(
     task: Dict[str, Any],
     result: Dict[str, Any],
     model_patch: str,
+    job: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     steps = []
     final_files: List[str] = []
@@ -80,6 +81,8 @@ def build_contextbench_trajectory(
         path: _merge_spans(spans)
         for path, spans in sorted(final_spans.items())
     }
+    job = dict(job or {})
+    model = dict(job.get("model") or {})
     return {
         "instance_id": task["instance_id"],
         "original_inst_id": task.get("original_inst_id", ""),
@@ -95,5 +98,11 @@ def build_contextbench_trajectory(
             "bench": task.get("bench"),
             "repo": task.get("repo"),
             "base_commit": task.get("base_commit"),
+            "run_id": job.get("run_id"),
+            "experiment_id": job.get("experiment_id"),
+            "model_id": model.get("id"),
+            "scaffold": job.get("scaffold"),
+            "repeat": job.get("repeat"),
+            "run_seed": job.get("run_seed"),
         },
     }
