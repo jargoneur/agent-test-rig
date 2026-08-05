@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from harness.reproducibility import utc_now_iso
@@ -134,9 +132,6 @@ class DistributedSchedulerStore(SchedulerStore):
             connection.execute("BEGIN IMMEDIATE")
             try:
                 self._release_expired(connection)
-                if self.pause_state().get("paused"):
-                    connection.execute("COMMIT")
-                    return None
                 row = connection.execute(
                     query, tuple(parameters + order_parameters)
                 ).fetchone()
