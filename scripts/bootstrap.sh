@@ -66,6 +66,19 @@ uv pip install --python .venv-contextbench/bin/python -r requirements/contextben
 
 bash scripts/fetch_upstreams.sh
 
+# Install the frozen SWE-agent checkout as a normal wheel so that all declared
+# runtime dependencies, including SWE-ReX, are present. Runtime imports still
+# prefer the verified checkout through harness.upstreams.
+uv pip install --python .venv/bin/python "$ROOT/.upstreams/swe-agent"
+PYTHONPATH="$ROOT:$ROOT/.upstreams/swe-agent" .venv/bin/python - <<'PY'
+import swerex
+from sweagent.agent.history_processors import LastNObservations
+
+print("SWE-agent dependencies: available")
+print("SWE-ReX version:", getattr(swerex, "__version__", "unknown"))
+print("History processor:", LastNObservations.__name__)
+PY
+
 # Install dependency locks shipped by the frozen upstreams. Their source trees
 # remain untouched and are imported from the verified commits.
 uv pip install --python .venv/bin/python -r .upstreams/aider/requirements.txt
