@@ -6,26 +6,16 @@ from typing import Any, Dict, Optional
 
 
 class ResourceYieldRequested(BaseException):
-    """Raised at a safe checkpoint when a shared resource must be yielded.
-
-    This deliberately inherits from BaseException so generic application-level
-    ``except Exception`` blocks cannot accidentally convert a required resource
-    yield into an ordinary model or tool error.
-    """
+    """Raised at a safe checkpoint when a worker must stop taking shared compute."""
 
 
 class ResourcePolicy:
-    """Fail-closed policy for opportunistic use of shared compute.
-
-    The harness cannot prove a cluster administrator's scheduling policy. It can,
-    however, refuse to start shared-resource work until that policy has been
-    explicitly verified, react to scheduler signals or an external availability
-    command, and release the current scheduler lease without losing completed runs.
-    """
+    """Explicit resource-operation metadata and cooperative pause handling."""
 
     VALID_SHARED_MODES = {
         "scheduler_preemptible",
         "external_yield_signal",
+        "manual_operator",
     }
 
     def __init__(
@@ -50,6 +40,9 @@ class ResourcePolicy:
         )
         self.verification_reference = str(
             value.get("verification_reference") or ""
+        ).strip()
+        self.operator_acknowledgement = str(
+            value.get("operator_acknowledgement") or ""
         ).strip()
         self.pause_file = Path(
             value.get("pause_file") or pause_file or "PAUSE"
@@ -80,18 +73,26 @@ class ResourcePolicy:
             )
         if self.mode not in self.VALID_SHARED_MODES:
             raise ValueError(
-                "Shared resources require mode scheduler_preemptible or "
-                "external_yield_signal"
+                "Shared resources require mode scheduler_preemptible, "
+                "external_yield_signal, or manual_operator"
             )
-        if not self.priority_mechanism_verified:
-            raise ValueError(
-                "Shared-resource worker is blocked until the external priority "
-                "mechanism is verified"
-            )
-        if not self.verification_reference:
-            raise ValueError(
-                "Shared-resource verification_reference is required"
-            )
+
+        if self.mode == "manual_operator":
+            if not self.operator_acknowledgement:
+                raise ValueError(
+                    "manual_operator mode requires operator_acknowledgement"
+                )
+        else:
+            if not self.priority_mechanism_verified:
+                raise ValueError(
+                    "Shared-resource worker is blocked until the external priority "
+                    "mechanism is verified"
+                )
+            if not self.verification_reference:
+                raise ValueError(
+                    "Shared-resource verification_reference is required"
+                )
+
         if self.mode == "external_yield_signal" and not self.availability_command:
             raise ValueError(
                 "external_yield_signal mode requires availability_command"
@@ -152,7 +153,6 @@ class ResourcePolicy:
             raise ResourceYieldRequested("%s at %s" % (reason, label))
 
     def release(self) -> Optional[int]:
-        """Run the configured backend/resource release command, if any."""
         if not self.release_command:
             return None
         result = subprocess.run(
@@ -169,6 +169,7 @@ class ResourcePolicy:
             "mode": self.mode,
             "priority_mechanism_verified": self.priority_mechanism_verified,
             "verification_reference": self.verification_reference,
+            "operator_acknowledgement": self.operator_acknowledgement,
             "pause_file": str(self.pause_file),
             "availability_command_configured": bool(self.availability_command),
             "release_command_configured": bool(self.release_command),
