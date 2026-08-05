@@ -32,6 +32,31 @@ def build_contextbench_trajectory(
     final_files: List[str] = []
     final_spans: Dict[str, List[Dict[str, int]]] = {}
 
+    scaffold_state = dict(result.get("scaffold_state") or {})
+    injected_files = [
+        str(path) for path in scaffold_state.get("context_files") or [] if path
+    ]
+    injected_spans = dict(scaffold_state.get("context_spans") or {})
+    if injected_files or injected_spans:
+        steps.append(
+            {
+                "files": injected_files,
+                "spans": injected_spans,
+                "symbols": {},
+            }
+        )
+        final_files.extend(injected_files)
+        for path, spans in injected_spans.items():
+            if path not in final_files:
+                final_files.append(path)
+            for span in spans or []:
+                _append_span(
+                    final_spans,
+                    str(path),
+                    int(span["start"]),
+                    int(span["end"]),
+                )
+
     for item in result.get("history", []):
         observation = item.get("observation") or {}
         step_files: List[str] = []
