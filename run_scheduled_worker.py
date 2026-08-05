@@ -14,6 +14,7 @@ import requests
 import yaml
 
 from harness.experiment_jobs import atomic_write_json, result_file
+from harness.llama_cpp_server import LlamaCppServerManager
 from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
 from run_worker import execute_job
 
@@ -95,6 +96,39 @@ def release_scheduler_lease_for_yield(
     )
 
 
+def _build_model_manager(config: Dict[str, Any], worker_id: str):
+    runtime = config.get("model_runtime")
+    if not runtime:
+        return None
+    if not isinstance(runtime, dict):
+        raise ValueError("model_runtime must be a mapping")
+    runtime_type = str(runtime.get("type") or "llama_cpp")
+    if runtime_type != "llama_cpp":
+        raise ValueError("Unsupported model_runtime.type: %s" % runtime_type)
+    return LlamaCppServerManager(runtime, worker_id=worker_id)
+
+
+def _resolve_capabilities(
+    config: Dict[str, Any],
+    model_manager: Optional[LlamaCppServerManager],
+) -> Dict[str, Any]:
+    capabilities = dict(config.get("capabilities") or {})
+    if model_manager is not None:
+        provisioned = set(model_manager.model_ids())
+        configured = set(str(value) for value in capabilities.get("model_ids", []))
+        if configured:
+            missing = configured.difference(provisioned)
+            if missing:
+                raise ValueError(
+                    "Worker advertises models missing from registry: %s"
+                    % ", ".join(sorted(missing))
+                )
+            capabilities["model_ids"] = sorted(configured)
+        else:
+            capabilities["model_ids"] = sorted(provisioned)
+    return capabilities
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Pull complete paired blocks from the central scheduler."
@@ -112,7 +146,8 @@ def main() -> None:
     worker_id = str(config.get("worker_id") or socket.gethostname())
     scheduler_url = str(config["scheduler_url"])
     token = config.get("scheduler_token") or os.environ.get("SCHEDULER_TOKEN")
-    capabilities = dict(config.get("capabilities") or {})
+    model_manager = _build_model_manager(config, worker_id)
+    capabilities = _resolve_capabilities(config, model_manager)
     results_root = Path(config.get("results_root", "distributed_results/%s" % worker_id))
     results_root.mkdir(parents=True, exist_ok=True)
     lease_seconds = int(config.get("lease_seconds", 7200))
@@ -144,6 +179,10 @@ def main() -> None:
         "Resource policy:",
         json.dumps(resource_policy.metadata(), ensure_ascii=False),
     )
+    if model_manager is not None:
+        print("Model registry:", model_manager.registry_path)
+        print("llama-server:", model_manager.binary)
+        print("GPU selector:", model_manager.gpu)
 
     completed_blocks = 0
     yielded = False
@@ -204,6 +243,15 @@ def main() -> None:
                         len(block["jobs"]),
                     )
                 )
+                runtime_overrides = None
+                if model_manager is not None:
+                    resource_policy.checkpoint("before_model_server_start")
+                    runtime_overrides = model_manager.ensure_model(active_model_id)
+                    print(
+                        "Active model server:",
+                        json.dumps(runtime_overrides, ensure_ascii=False),
+                    )
+
                 for job in block["jobs"]:
                     resource_policy.checkpoint(
                         "before_scaffold:%s" % job["scaffold"]
@@ -224,6 +272,7 @@ def main() -> None:
                         results_root,
                         worker_id,
                         resource_policy=resource_policy,
+                        runtime_overrides=runtime_overrides,
                     )
                     atomic_write_json(output_path, record)
                     records.append(record)
@@ -304,6 +353,8 @@ def main() -> None:
             if yielded:
                 break
     finally:
+        if model_manager is not None:
+            model_manager.stop()
         release_code = resource_policy.release()
         if release_code not in (None, 0):
             print("Resource release command returned:", release_code)
