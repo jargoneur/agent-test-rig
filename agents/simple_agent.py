@@ -17,6 +17,8 @@ class SimpleAgent:
         expected_files=None,
         run_seed=None,
         resource_policy=None,
+        test_command="pytest",
+        run_final_tests=True,
     ):
         self.model = model
         self.tools = tools
@@ -26,6 +28,8 @@ class SimpleAgent:
         self.expected_files = set(expected_files or [])
         self.run_seed = run_seed
         self.resource_policy = resource_policy
+        self.test_command = str(test_command or "pytest")
+        self.run_final_tests = bool(run_final_tests)
         self.files_read = set()
 
     def _resource_checkpoint(self, label):
@@ -56,11 +60,51 @@ class SimpleAgent:
     def execute_action(self, action):
         name = action.get("action")
 
+        if name == "list_files":
+            files = self.tools.list_files(
+                glob=action.get("glob"),
+                limit=action.get("limit", 200),
+            )
+            return {
+                "type": "file_list",
+                "glob": action.get("glob"),
+                "files": files,
+            }
+
+        if name == "search_text":
+            results = self.tools.search_text(
+                query=str(action.get("query") or ""),
+                glob=action.get("glob"),
+                limit=int(action.get("limit", 50)),
+            )
+            return {
+                "type": "search_result",
+                "query": action.get("query"),
+                "results": results,
+            }
+
         if name == "read_file":
             path = action["path"]
-            content = self.tools.read_file(path)
+            total_lines = self.tools.line_count(path)
+            start_line = max(1, int(action.get("start_line") or 1))
+            end_line = min(
+                total_lines,
+                int(action.get("end_line") or total_lines),
+            )
+            content = self.tools.read_file(
+                path,
+                start_line=start_line,
+                end_line=end_line,
+            )
             self.files_read.add(path)
-            return {"type": "file_content", "path": path, "content": content}
+            return {
+                "type": "file_content",
+                "path": path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "total_lines": total_lines,
+                "content": content,
+            }
 
         if name == "write_file":
             path = action["path"]
@@ -82,11 +126,13 @@ class SimpleAgent:
             }
 
         if name == "run_tests":
-            command = action.get("command", "pytest")
+            command = action.get("command", self.test_command)
             result = self.tools.run_tests(command)
             return {
                 "type": "test_result",
+                "command": command,
                 "passed": result["passed"],
+                "timed_out": result.get("timed_out", False),
                 "stdout": result["stdout"][-4000:],
                 "stderr": result["stderr"][-4000:],
             }
@@ -149,6 +195,8 @@ class SimpleAgent:
                 "run_seed": self.run_seed,
                 "model": getattr(self.model, "model_name", None),
                 "generation_options": getattr(self.model, "options", {}),
+                "test_command": self.test_command,
+                "run_final_tests": self.run_final_tests,
             },
         )
 
@@ -251,7 +299,14 @@ class SimpleAgent:
                     target_file_written = True
 
             state = self.scaffold.update_state(state, action, observation)
-            history.append({"step": step, "action": action, "observation": observation})
+            history.append(
+                {
+                    "step": step,
+                    "response": response,
+                    "action": action,
+                    "observation": observation,
+                }
+            )
 
             self.logger.log(
                 "step_finished",
@@ -282,7 +337,16 @@ class SimpleAgent:
                 break
 
         self._resource_checkpoint("before_final_tests")
-        final_tests = self.tools.run_tests("pytest")
+        if self.run_final_tests:
+            final_tests = self.tools.run_tests(self.test_command)
+        else:
+            final_tests = {
+                "passed": None,
+                "stdout": "",
+                "stderr": "",
+                "returncode": None,
+                "timed_out": False,
+            }
 
         diagnostics = {
             "target_file_read": target_file_read,
