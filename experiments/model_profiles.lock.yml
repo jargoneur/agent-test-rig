@@ -29,12 +29,13 @@ hardware_envelope:
   require_runtime_safety_margin: true
 
 common_protocol_limits:
-  input_context_tokens: pending_memory_profile
+  input_context_tokens: null
   max_new_tokens_per_action: 2048
 
 runtime:
   backend: pending_validation
   backend_revision: pending_validation
+  target_quantization: int8
   artifact_rule: one_identical_hashed_artifact_per_model_on_every_worker
 
 models:
@@ -44,7 +45,8 @@ models:
     family: qwen3.5
     architecture: dense
     parameters_billion: 0.8
-    resolved_generation_options: pending_official_extraction
+    generation_profile_status: pending_official_extraction
+    resolved_generation_options: {}
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
@@ -57,7 +59,8 @@ models:
     family: qwen3.5
     architecture: dense
     parameters_billion: 2
-    resolved_generation_options: pending_official_extraction
+    generation_profile_status: pending_official_extraction
+    resolved_generation_options: {}
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
@@ -70,7 +73,8 @@ models:
     family: qwen3.5
     architecture: dense
     parameters_billion: 4
-    resolved_generation_options: pending_official_extraction
+    generation_profile_status: pending_official_extraction
+    resolved_generation_options: {}
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
@@ -83,7 +87,8 @@ models:
     family: qwen3.5
     architecture: dense
     parameters_billion: 9
-    resolved_generation_options: pending_official_extraction
+    generation_profile_status: pending_official_extraction
+    resolved_generation_options: {}
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
@@ -96,7 +101,8 @@ models:
     family: qwen3.5
     architecture: dense
     parameters_billion: 27
-    resolved_generation_options: pending_official_extraction
+    generation_profile_status: pending_official_extraction
+    resolved_generation_options: {}
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
@@ -110,7 +116,8 @@ models:
     architecture: mixture_of_experts
     parameters_billion_total: 35
     parameters_billion_active: 3
-    resolved_generation_options: pending_official_extraction
+    generation_profile_status: pending_official_extraction
+    resolved_generation_options: {}
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
