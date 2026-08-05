@@ -1,27 +1,43 @@
-schema_version: 2
-frozen_at: "2026-08-05"
+schema_version: 3
+frozen_at: "2026-08-06"
 policy_document: docs/research_scope_and_resource_policy.md
 
 minimum_successful_result:
   status: required
-  source: professor_alexander_eck_and_prior_project_plan
-  model_count: 10
+  source: user_protocol_decision_two_complete_families
+  model_count: 11
   model_families:
     qwen3_5: 6
-    gemma4: 4
+    gemma4: 5
   benchmark:
     name: ContextBench
     frozen_task_count: 150
   main_scaffold_count: 4
   repeats: 3
-  expected_run_count: 18000
-  expected_run_count_formula: "10 * 150 * 4 * 3"
+  expected_run_count: 19800
+  expected_run_count_formula: "11 * 150 * 4 * 3"
   estimated_gpu_hours_per_model: 50
-  estimated_gpu_hours_total: 500
+  estimated_gpu_hours_total: 550
+  estimate_status: planning_only_not_measured
   includes_prefill_cost: true
   pilot_counts_as_result: false
   partial_family_counts_as_result: false
   reduced_task_or_scaffold_set_counts_as_result: false
+
+model_family_members:
+  qwen3_5:
+    - Qwen/Qwen3.5-0.8B
+    - Qwen/Qwen3.5-2B
+    - Qwen/Qwen3.5-4B
+    - Qwen/Qwen3.5-9B
+    - Qwen/Qwen3.5-27B
+    - Qwen/Qwen3.5-35B-A3B
+  gemma4:
+    - google/gemma-4-E2B-it
+    - google/gemma-4-E4B-it
+    - google/gemma-4-12B-it
+    - google/gemma-4-26B-A4B-it
+    - google/gemma-4-31B-it
 
 execution_waves:
   - id: validation
@@ -30,10 +46,11 @@ execution_waves:
       - technical_integration
       - protocol_validation
       - memory_and_prefill_validation
-      - resource_yield_validation
+      - distributed_recovery_validation
+      - cooperative_pause_validation
   - id: minimum_core
     research_result: true
-    purpose: complete_all_18000_frozen_core_runs
+    purpose: complete_all_19800_frozen_core_runs
   - id: optional_expansion
     research_result: supplementary
     append_only: true
@@ -59,26 +76,34 @@ execution_waves:
       - oracle_only
       - capability_limited
 
-shared_resource_policy:
-  other_users_priority: true
-  project_access_mode: opportunistic
-  explicit_policy_required_for_every_worker: true
-  production_priority_verification_required: true
-  written_verification_reference_required: true
-  permitted_modes:
-    - scheduler_preemptible
-    - external_yield_signal
-  release_mechanism_required: true
+plato_resource_policy:
+  permission_status: confirmed
+  permission_reference: prof_eck_permission_compute_until_contact_2026-08-05
+  permission_rule: computation_allowed_until_professor_contacts_user
+  external_interest_management_system: false
+  mode: manual_operator
+  automatic_preemption_claimed: false
+  manual_supervision_required: true
+  central_pause_required: true
   preserve_completed_runs_on_yield: true
   requeue_incomplete_blocks_on_yield: true
-  release_model_server_and_allocation_on_yield: true
-  cooperative_checkpoints:
-    - before_worker_registration
-    - before_block_claim
-    - before_job_setup
-    - before_prompt_construction
-    - before_model_call
-    - after_model_call
-    - before_tool_action
-    - before_final_tests
-  limitation: cooperative_yield_cannot_interrupt_an_active_model_call_or_tool_process
+
+worker_resource_modes:
+  - local_exclusive
+  - scheduler_preemptible
+  - external_yield_signal
+  - manual_operator
+
+cooperative_checkpoints:
+  - before_worker_registration
+  - before_block_claim
+  - before_job_setup
+  - before_prompt_construction
+  - before_model_call
+  - after_model_call
+  - before_tool_action
+  - before_final_tests
+
+limitations:
+  - cooperative_pause_cannot_interrupt_active_model_call_or_tool_process
+  - manual_operator_mode_cannot_detect_uncommunicated_external_demand
