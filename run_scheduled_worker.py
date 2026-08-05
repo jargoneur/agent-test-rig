@@ -61,16 +61,27 @@ class SchedulerClient:
                 if not isinstance(value, dict):
                     raise RuntimeError("Scheduler returned a non-object response")
                 return value
-            except (requests.RequestException, ValueError, RuntimeError) as error:
+            except requests.HTTPError as error:
+                last_error = error
+                status = error.response.status_code if error.response is not None else 0
+                if status and status < 500:
+                    raise
+                if attempt + 1 >= attempts:
+                    raise
+            except (requests.ConnectionError, requests.Timeout) as error:
                 last_error = error
                 if attempt + 1 >= attempts:
                     raise
-                delay = min(30.0, 1.5 * (2 ** attempt))
-                print(
-                    "Scheduler request retry %d/%d for %s: %s"
-                    % (attempt + 1, attempts - 1, path, error)
-                )
-                time.sleep(delay)
+            except (ValueError, RuntimeError) as error:
+                last_error = error
+                if attempt + 1 >= attempts:
+                    raise
+            delay = min(30.0, 1.5 * (2 ** attempt))
+            print(
+                "Scheduler request retry %d/%d for %s: %s"
+                % (attempt + 1, attempts - 1, path, last_error)
+            )
+            time.sleep(delay)
         raise RuntimeError("Scheduler request failed: %s" % last_error)
 
     def get(self, path: str, retries: int = 0) -> Dict[str, Any]:
@@ -98,15 +109,24 @@ class HeartbeatThread(threading.Thread):
         client: SchedulerClient,
         payload: Dict[str, Any],
         interval: int,
+        pause_file: Optional[Path] = None,
     ):
         super().__init__(daemon=True)
         self.client = client
         self.payload = payload
         self.interval = max(10, interval)
+        self.pause_file = pause_file
         self.stop_event = threading.Event()
         self.invalid = False
         self.pause_requested = False
         self.pause_reason: Optional[str] = None
+
+    def _request_pause(self, reason: str) -> None:
+        self.pause_requested = True
+        self.pause_reason = reason
+        if self.pause_file is not None:
+            self.pause_file.parent.mkdir(parents=True, exist_ok=True)
+            self.pause_file.write_text(reason + "\n", encoding="utf-8")
 
     def run(self) -> None:
         while not self.stop_event.wait(self.interval):
@@ -117,9 +137,8 @@ class HeartbeatThread(threading.Thread):
                     return
                 control = response.get("control") or {}
                 if control.get("paused"):
-                    self.pause_requested = True
-                    self.pause_reason = str(
-                        control.get("reason") or "central scheduler pause"
+                    self._request_pause(
+                        str(control.get("reason") or "central scheduler pause")
                     )
             except Exception as error:
                 print("Heartbeat warning:", error)
@@ -311,6 +330,7 @@ def main() -> None:
                 client,
                 heartbeat_payload,
                 heartbeat_seconds,
+                pause_file=resource_policy.pause_file,
             )
             heartbeat.start()
             records = []
