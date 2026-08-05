@@ -15,6 +15,8 @@ WORKER_COUNT="${PLATO_WORKERS:-1}"
 MODEL_IDS="${MODEL_IDS:-}"
 RESOURCE_CLASSES="${RESOURCE_CLASSES:-}"
 WAVES="${WAVES:-}"
+STORAGE_SOFT_LIMIT_GIB="${PLATO_STORAGE_SOFT_LIMIT_GIB:-80}"
+STORAGE_RESERVE_GIB="${PLATO_STORAGE_RESERVE_GIB:-5}"
 
 if [[ ! -x .venv/bin/python ]]; then
     echo "Missing .venv. Run: bash scripts/bootstrap.sh --require-cuda --prepare-contextbench" >&2
@@ -36,6 +38,10 @@ if ! [[ "$WORKER_COUNT" =~ ^[0-9]+$ ]] || [[ "$WORKER_COUNT" -lt 1 ]]; then
     echo "PLATO_WORKERS must be a positive integer." >&2
     exit 1
 fi
+
+.venv/bin/python scripts/storage_preflight.py \
+    --soft-limit-gib "$STORAGE_SOFT_LIMIT_GIB" \
+    --minimum-filesystem-free-gib "$STORAGE_RESERVE_GIB"
 
 mapfile -t GPU_UUIDS < <(nvidia-smi --query-gpu=uuid --format=csv,noheader)
 if [[ "$WORKER_COUNT" -gt "${#GPU_UUIDS[@]}" ]]; then
@@ -127,6 +133,7 @@ echo "Manifest: $MANIFEST"
 echo "Scheduler database: $SCHEDULER_DB"
 echo "Backup directory: $BACKUP_DIR"
 echo "Workers started: $WORKER_COUNT"
+echo "Storage soft limit: $STORAGE_SOFT_LIMIT_GIB GiB"
 echo "Token file: $TOKEN_FILE"
 echo "Worker logs: $LOG_DIR/worker-gpu*.log"
 echo
