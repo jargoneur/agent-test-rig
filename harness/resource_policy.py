@@ -5,8 +5,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-class ResourceYieldRequested(RuntimeError):
-    """Raised at a safe checkpoint when a shared resource must be yielded."""
+class ResourceYieldRequested(BaseException):
+    """Raised at a safe checkpoint when a shared resource must be yielded.
+
+    This deliberately inherits from BaseException so generic application-level
+    ``except Exception`` blocks cannot accidentally convert a required resource
+    yield into an ordinary model or tool error.
+    """
 
 
 class ResourcePolicy:
