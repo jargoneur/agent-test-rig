@@ -4,32 +4,60 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
+from typing import Any, Dict, Tuple
 
+from harness.contextbench_trajectory import build_contextbench_trajectory
 from harness.upstreams import upstream_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
+
+
+def task_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = dict(record.get("task") or {})
+    config = dict(metadata.get("task_config") or {})
+    return {
+        "id": metadata.get("id") or config.get("id"),
+        "instance_id": metadata.get("instance_id") or config.get("instance_id"),
+        "original_inst_id": metadata.get("original_inst_id")
+        or config.get("original_inst_id"),
+        "bench": metadata.get("bench") or config.get("bench"),
+        "repo": metadata.get("repo") or config.get("repo"),
+        "base_commit": metadata.get("base_commit") or config.get("base_commit"),
+    }
+
+
+def condition_key(record: Dict[str, Any]) -> Tuple[str, str, int]:
+    job = dict(record.get("job") or {})
+    model = dict(job.get("model") or {})
+    return (
+        str(model.get("id") or model.get("name") or "unknown-model"),
+        str(job.get("scaffold") or "unknown-scaffold"),
+        int(job.get("repeat") or 0),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Collect agent-rig trajectories and run the pinned ContextBench evaluator."
+        description="Collect completed runs and evaluate each ContextBench condition."
     )
-    parser.add_argument("roots", nargs="+", help="Exported or worker result roots")
+    parser.add_argument("roots", nargs="+", help="Scheduler exports or worker result roots")
     parser.add_argument(
         "--gold",
         default="benchmarks/contextbench/gold.parquet",
     )
     parser.add_argument(
-        "--pred",
-        default="results/contextbench_predictions.jsonl",
-    )
-    parser.add_argument(
-        "--out",
-        default="results/contextbench_metrics.jsonl",
+        "--output-dir",
+        default="results/contextbench_evaluation",
     )
     parser.add_argument(
         "--cache-dir",
@@ -37,65 +65,103 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    trajectories = {}
+    groups = defaultdict(dict)
     for root_value in args.roots:
         root = Path(root_value)
-        candidates = root.rglob("*.context.json") if root.is_dir() else [root]
+        candidates = root.rglob("run_*.json") if root.is_dir() else [root]
         for path in candidates:
             try:
-                value = json.loads(path.read_text(encoding="utf-8"))
+                record = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError, json.JSONDecodeError):
                 continue
-            instance_id = value.get("instance_id")
-            if not instance_id:
+            if record.get("status") != "completed":
                 continue
-            key = (
-                str(instance_id),
-                str((value.get("agent_rig") or {}).get("task_id") or ""),
-                str(path),
+            task_metadata = dict(record.get("task") or {})
+            if task_metadata.get("source") != "contextbench":
+                continue
+            task = task_from_record(record)
+            if not task.get("instance_id"):
+                continue
+            trajectory = build_contextbench_trajectory(
+                task,
+                dict(record.get("result") or {}),
+                str(record.get("model_patch") or ""),
+                job=dict(record.get("job") or {}),
             )
-            trajectories[key] = value
-
-    if not trajectories:
-        raise RuntimeError("No ContextBench trajectory files found")
-
-    pred_path = Path(args.pred)
-    pred_path.parent.mkdir(parents=True, exist_ok=True)
-    with pred_path.open("w", encoding="utf-8") as handle:
-        for key in sorted(trajectories):
-            handle.write(
-                json.dumps(
-                    trajectories[key],
-                    ensure_ascii=False,
-                    sort_keys=True,
+            key = condition_key(record)
+            instance_id = str(trajectory["instance_id"])
+            existing = groups[key].get(instance_id)
+            if existing is not None and existing != trajectory:
+                raise RuntimeError(
+                    "Conflicting completed trajectories for %s in %s"
+                    % (instance_id, key)
                 )
-                + "\n"
-            )
+            groups[key][instance_id] = trajectory
 
+    if not groups:
+        raise RuntimeError("No completed ContextBench run records found")
+
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     contextbench = upstream_path("contextbench")
     environment = os.environ.copy()
-    existing = environment.get("PYTHONPATH")
+    existing_pythonpath = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = (
-        str(contextbench) if not existing else str(contextbench) + os.pathsep + existing
+        str(contextbench)
+        if not existing_pythonpath
+        else str(contextbench) + os.pathsep + existing_pythonpath
     )
-    command = [
-        sys.executable,
-        "-m",
-        "contextbench.evaluate",
-        "--gold",
-        str(Path(args.gold).resolve()),
-        "--pred",
-        str(pred_path.resolve()),
-        "--out",
-        str(Path(args.out).resolve()),
-        "--cache-dir",
-        str(Path(args.cache_dir).resolve()),
-    ]
-    print("Predictions:", pred_path)
-    print("Trajectories:", len(trajectories))
-    print("+", " ".join(command), flush=True)
-    subprocess.run(command, cwd=contextbench, env=environment, check=True)
-    print("Metrics:", args.out)
+
+    summary = []
+    for (model_id, scaffold, repeat), by_instance in sorted(groups.items()):
+        condition = "%s__%s__r%d" % (model_id, scaffold, repeat)
+        stem = safe_name(condition)
+        pred_path = output_dir / (stem + ".predictions.jsonl")
+        metrics_path = output_dir / (stem + ".metrics.jsonl")
+        with pred_path.open("w", encoding="utf-8") as handle:
+            for instance_id in sorted(by_instance):
+                handle.write(
+                    json.dumps(
+                        by_instance[instance_id],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+
+        command = [
+            sys.executable,
+            "-m",
+            "contextbench.evaluate",
+            "--gold",
+            str(Path(args.gold).resolve()),
+            "--pred",
+            str(pred_path),
+            "--out",
+            str(metrics_path),
+            "--cache-dir",
+            str(Path(args.cache_dir).resolve()),
+        ]
+        print("Condition:", condition, "instances=", len(by_instance))
+        print("+", " ".join(command), flush=True)
+        subprocess.run(command, cwd=contextbench, env=environment, check=True)
+        summary.append(
+            {
+                "model_id": model_id,
+                "scaffold": scaffold,
+                "repeat": repeat,
+                "instances": len(by_instance),
+                "predictions": str(pred_path),
+                "metrics": str(metrics_path),
+            }
+        )
+
+    summary_path = output_dir / "conditions.json"
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print("Condition summary:", summary_path)
 
 
 if __name__ == "__main__":
