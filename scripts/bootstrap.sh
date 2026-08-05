@@ -87,7 +87,7 @@ if [[ "$SKIP_LLAMA_BUILD" -eq 0 ]]; then
         -B .upstreams/llama.cpp/build
         -G Ninja
         -DGGML_CUDA="$CUDA_FLAG"
-        -DLLAMA_CURL=ON
+        -DLLAMA_CURL=OFF
         -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_MAKE_PROGRAM="$NINJA_BIN"
     )
