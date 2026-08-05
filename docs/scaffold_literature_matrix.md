@@ -1,136 +1,120 @@
 # Literature Matrix for Context-Management Scaffolds
 
-**Status:** design decision v1.0, frozen on 2026-08-05  
-**Scope:** repository-level issue resolution with small local coding models  
-**Selection rule:** each main condition must represent a documented and commonly used context-management mechanism, be reproducible in the same agent harness, and avoid changing planning, editing, testing, or retry strategy unless that change is intrinsic to the context mechanism.
+**Status:** design decision v1.1, frozen on 2026-08-05  
+**Scope:** repository-level issue resolution with small local coding models
+
+## Source-code rule
+
+Benchmark and scaffold algorithms are **not reimplemented in this repository**. The study uses pinned upstream implementations and permits only thin adapters for message schemas, model endpoints, scheduler integration, and logging. Any compatibility change must be an explicit patch file with a recorded hash. Exact repositories and commits are frozen in `docs/upstream_components.lock.yml`.
+
+This rule matters scientifically: the named conditions must be actual published implementations, not locally recreated approximations that merely resemble them.
 
 ## Decision matrix
 
-| Candidate | Primary evidence | Evidence of practical use | Context problem addressed | Isolatable in this harness? | Main confounds | Decision |
-|---|---|---|---|---|---|---|
-| Rule-based recent-observation truncation | SWE-agent paper; SWE-agent `LastNObservations` documentation | Used in the original SWE-agent configuration; the current implementation explicitly supports keeping the last *n* observations and eliding older outputs | Temporal growth of tool observations | Yes. It only changes the history view sent to the model | Can discard an early decisive observation; favors short trajectories | **Selected as control: `sweagent_last5`** |
-| Graph-ranked repository map | Aider repository-map documentation | Aider sends a token-bounded map of files, symbols, signatures, and important definition lines; relevance is ranked over a dependency/reference graph | Global spatial orientation in a large repository | Yes. It can be added as a read-only context provider without changing tools or control loop | Extra tokens can overwhelm weaker models; static/global context may lower precision | **Selected: `aider_repomap`** |
-| Hierarchical code localization | Agentless; AutoCodeRover; supporting evidence from RepoCoder | Agentless localizes file -> class/function -> edit location; AutoCodeRover uses AST-aware iterative code search; RepoCoder establishes iterative repository retrieval | Targeted spatial selection of files, symbols, and spans | Yes, if localization calls and their cost are fully logged and the resulting context is injected into the unchanged action loop | Adds model calls and may improve performance through decomposition as well as context selection | **Selected: `hierarchical_localization`** |
-| Threshold-triggered LLM history summarization | Aider automatic history summarization; source-code taxonomy of 13 coding agents; Claude Code architecture analysis | Aider, OpenHands, Gemini CLI, Codex CLI, and OpenCode use scaffold-triggered LLM summarization; Claude Code uses a multi-layer pipeline ending in model-generated auto-compaction | Temporal retention after the raw trajectory becomes too large | Yes. It replaces the control condition's truncation policy while leaving repository access unchanged | Adds summarization calls; summaries may omit or fabricate facts | **Selected: `threshold_summary`** |
-| Persistent cross-session memory | General agent-memory literature and interactive coding products | Project instruction files and long-term memory are common in interactive tools | Knowledge reuse across sessions/tasks | No for the main construct. It introduces learning across tasks and order effects | Data leakage, task-order dependence, contamination between benchmark instances | Rejected from main experiment |
-| Planning, reflection, test-first, critic, or multi-agent delegation | Broad agent literature | Common in agent systems | Reasoning/control rather than context management | Not cleanly | Changes number of attempts, reasoning depth, roles, and compute | Rejected from main experiment |
-| Full Aider, Agentless, SWE-agent, Claude Code, or OpenHands systems | System papers and implementations | Widely used complete products/frameworks | Multiple problems simultaneously | No | Prompts, tools, edit formats, retries, models, and context policies all differ | Rejected; mechanisms are adapted instead |
-| Unbounded full history | mini-SWE-agent and simple loops | Exists as a minimal implementation | None | Technically yes | Overflow behavior depends on model/backend; not a defensible production control | Rejected as main control |
+| Condition | Upstream implementation | Literature/practice basis | Context problem | Decision |
+|---|---|---|---|---|
+| `sweagent_last5` | SWE-agent `LastNObservations(n=5)` in `sweagent/agent/history_processors.py` | Original SWE-agent history policy; directly documented in source and configuration | Temporal growth of tool observations | **Selected control** |
+| `aider_repomap` | Aider `RepoMap` in `aider/repomap.py` | Widely used Aider repository map; Tree-sitter and graph-ranked structural context | Global repository orientation | **Selected** |
+| `agentless_localization` | Agentless fault-localization pipeline in `agentless/fl/` | Agentless hierarchical file -> symbol -> location pipeline; supported conceptually by AutoCodeRover and RepoCoder | Targeted spatial context selection | **Selected** |
+| `aider_chat_summary` | Aider `ChatSummary` in `aider/history.py` | Production coding-agent history compaction with threshold-triggered recursive summarization | Temporal retention after context growth | **Selected** |
+| Persistent cross-task memory | No single selected implementation | Common in interactive products | Reuse across tasks | Rejected: leakage and task-order effects |
+| Planning, reflection, test-first, critic, multi-agent | Many implementations | Common agent strategies | Reasoning/control | Rejected: not primarily context management |
+| Complete Aider, Agentless, SWE-agent, or OpenHands systems | Full upstream systems | Established products/frameworks | Several mechanisms simultaneously | Rejected: too many confounded variables |
 
 ## Why these four
 
-The selected set covers two independent context axes while retaining one established control:
+The set covers two independent context axes while retaining one established control:
 
-1. **Temporal prevention:** `sweagent_last5` bounds history by eliding old observations.
-2. **Global spatial orientation:** `aider_repomap` gives a compact structural overview.
-3. **Targeted spatial selection:** `hierarchical_localization` selects likely files, symbols, and spans.
-4. **Temporal cure:** `threshold_summary` compresses older trajectory information instead of merely dropping it.
+1. `sweagent_last5`: discard old observation content while keeping recent observations.
+2. `aider_repomap`: supply a compact global map of repository structure.
+3. `agentless_localization`: select likely files, symbols, and edit locations hierarchically.
+4. `aider_chat_summary`: compress old dialogue into a model-generated summary instead of dropping it.
 
-The conditions are not claims that one product is superior to another. They are controlled operationalizations of recurring architectural mechanisms.
+The experiment compares mechanisms, not brands. Upstream code is called through a common harness, but its ranking, elision, localization, and summarization logic remains unchanged.
 
-## Frozen operational definitions
+## Allowed adapters
 
-### 1. `sweagent_last5` — control
+Adapters may only:
 
-Faithful mechanism: SWE-agent `LastNObservations(n=5)`.
+- convert the harness event schema into the upstream component's required schema and back;
+- expose the same local model through the API expected by the component;
+- pass repository paths and fixed configuration values;
+- capture outputs, calls, tokens, latency, exceptions, and provenance;
+- enforce the experiment-wide resource limits outside the upstream algorithm.
 
-- Keep the immutable system prompt, task statement, tool schema, current repository state, and model actions.
-- Keep complete outputs for the five most recent observations.
-- Replace older observation outputs with a fixed elision marker containing only tool type and omitted-length metadata.
-- No repository map, pre-localization, retrieval index, or LLM-generated summary.
-- This history policy is also the temporal base for `aider_repomap` and `hierarchical_localization`.
+Adapters may not:
 
-### 2. `aider_repomap`
+- rewrite prompts or ranking formulas;
+- replace parsers with locally invented alternatives;
+- post-process outputs to improve relevance or correctness;
+- add retries not present in the frozen protocol;
+- silently fall back to a custom local implementation.
 
-Faithful mechanism: Aider-style token-bounded repository map.
+A component that cannot run under these restrictions is removed through a protocol amendment rather than recreated locally.
 
-- Parse Python with Tree-sitter or the standard AST where Tree-sitter is unavailable.
-- Represent file paths, classes, functions, methods, signatures, imports, and critical definition lines.
-- Build a directed reference/import graph and rank nodes using PageRank-style centrality plus task/chat relevance.
-- Refresh ranking after files are read or edited, without an additional LLM call.
-- Inject at most **2,048 tokens** of map content per model turn.
-- Retain `sweagent_last5` history processing.
-- Do not inject full retrieved source bodies automatically.
+## Frozen upstream sources
 
-### 3. `hierarchical_localization`
+### Benchmark: ContextBench
 
-Faithful mechanism: Agentless file -> symbol -> span localization, supported by AutoCodeRover's structure-aware search.
+- Repository: `EuniAI/ContextBench`
+- Pinned commit: `1436c28a8eb95496da4ea69ad458b9f8a8eb7d61`
+- Reused directly: dataset loader, unified runner, trajectory processors, symbol/span extraction, gold-context metrics, and evaluator.
+- No local rewrite of task definitions or context metrics.
 
-Before the normal action loop, the evaluated model performs:
+### Control: SWE-agent LastNObservations
 
-1. **File localization:** select likely files from the repository tree and task statement.
-2. **Symbol localization:** select classes/functions from skeletons of the shortlisted files.
-3. **Span localization:** select concrete source ranges from the shortlisted symbols.
+- Repository: `SWE-agent/SWE-agent`
+- Pinned commit: `3ea751c087f32b16e039a2233dd6eefecef325d5`
+- Source: `sweagent/agent/history_processors.py`
+- Symbol: `LastNObservations`
+- Frozen parameters: `n=5`, `polling=1`.
 
-Controls:
+The upstream class itself determines which observation outputs are elided and the replacement text.
 
-- Use the same evaluated model as the action loop.
-- Temperature `0`; deterministic derived seed where supported.
-- Maximum **512 output tokens per localization call**.
-- One schema-repair call is allowed for malformed localization output and is counted.
-- Inject at most **2,048 tokens** of localized source context into every action-loop turn.
-- All localization calls, tokens, latency, parser failures, and selected entities are logged.
-- Retain `sweagent_last5` history processing.
-- No repo map and no history summary.
+### Repository map: Aider RepoMap
 
-This condition is a system-level context-management comparison. Because decomposition requires extra calls, token/call cost is a required outcome rather than an uncontrolled omission.
+- Repository: `Aider-AI/aider`
+- Pinned commit: `5dc9490bb35f9729ef2c95d00a19ccd30c26339c`
+- Source: `aider/repomap.py`
+- Symbol: `RepoMap`.
 
-### 4. `threshold_summary`
+The map content, parsing, graph construction, ranking, and rendering come from Aider. The adapter only supplies repository files, task/chat context, model token metadata, and the frozen token budget.
 
-Faithful mechanism: scaffold-triggered model summarization as used by Aider and several contemporary coding agents.
+### Hierarchical localization: Agentless
 
-- No repository map and no pre-localization.
-- Keep the immutable system prompt and task statement.
-- When raw trajectory history exceeds **4,096 tokens**, summarize all but the two most recent observations.
-- Use the same evaluated model, temperature `0`, maximum **1,024 summary tokens**, and a deterministic derived seed where supported.
-- Summary schema must separate:
-  - confirmed repository facts,
-  - hypotheses,
-  - relevant files/symbols,
-  - edits made,
-  - test commands and results,
-  - unresolved questions,
-  - failed approaches.
-- The summary replaces the older history in the active context but the raw event log remains immutable on disk.
-- Re-summarize recursively when summary plus new older history again exceeds the threshold.
-- All summary calls and token use are logged.
+- Repository: `OpenAutoCoder/Agentless`
+- Pinned commit: `5ce5888b9f149beaace393957a55ea8ee46c9f71`
+- Sources: `agentless/fl/FL.py`, `localize.py`, `retrieve.py`, and `Index.py`.
 
-The structured fact/hypothesis separation is a safeguard, not a claim that summarization is lossless. Summary omissions and unsupported assertions are explicit failure modes to measure.
+The original localization stages and prompts are retained. Repair generation and patch ranking from Agentless are not used, because the condition is limited to context localization.
 
-## Common invariants
+### History compaction: Aider ChatSummary
 
-All four conditions use the same:
+- Repository: `Aider-AI/aider`
+- Pinned commit: `5dc9490bb35f9729ef2c95d00a19ccd30c26339c`
+- Source: `aider/history.py`
+- Symbol: `ChatSummary`.
 
-- model artifact, quantization, prompt template, tokenizer, backend, and backend version;
-- sampling parameters and paired run seed;
-- ReAct-style action loop and JSON action protocol;
-- read, write, test, and finish tools;
-- edit format and write restrictions;
-- maximum action steps;
-- test commands and success criterion;
-- input context window: **16,384 tokens**;
-- maximum generated tokens per action call: **2,048**;
-- per-tool-observation cap and truncation rule;
-- repository checkout and dependency environment.
+The upstream split, recursion, prompt, prefix, and summary replacement behavior remain unchanged. The adapter only provides the evaluated model through Aider's expected model interface.
 
-Auxiliary localization and summarization calls are part of their scaffold and therefore logged rather than hidden or equalized away.
+## Common controls
 
-## Literature strength and limitations
+All conditions use the same evaluated model artifact, quantization, backend, sampling settings, action tools, edit format, maximum action steps, repository checkout, validation tests, and outer context window. Additional calls made by Agentless localization or Aider summarization are part of those published mechanisms and are logged as cost outcomes.
 
-- `sweagent_last5`, `aider_repomap`, and `hierarchical_localization` have direct coding-agent implementations and task-level evidence.
-- `threshold_summary` is clearly common in deployed/open-source coding-agent architectures, but no dominant summarization design has emerged. The 2026 source-code taxonomy reports seven distinct compaction strategies across 13 agents and explicitly characterizes compaction as an active design frontier.
-- Therefore, the fourth condition tests the common **family** of threshold-triggered LLM summarization, not an assertion that the chosen structured summary is the unique industry standard.
+## Main limitations
+
+- Agentless localization uses extra model calls, so its effect combines context selection with decomposition. This cannot be removed without ceasing to use the upstream method; calls and tokens therefore become explicit dependent cost measures.
+- Aider's repository map and summary are two components from the same mature system, but they address different spatial and temporal problems and are used independently.
+- Upstream packages may assume different message schemas and model APIs. Thin adapters are unavoidable, but adapter tests must prove that inputs and outputs are passed without semantic modification.
 
 ## References
 
 1. Yao et al. (2022), *ReAct: Synergizing Reasoning and Acting in Language Models*. https://arxiv.org/abs/2210.03629
 2. Yang et al. (2024), *SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering*. https://arxiv.org/abs/2405.15793
-3. SWE-agent documentation, *History processors / LastNObservations*. https://swe-agent.com/1.0/reference/history_processor_config/
-4. Aider documentation, *Repository map*. https://aider.chat/docs/repomap.html
+3. SWE-agent source, `LastNObservations`. https://github.com/SWE-agent/SWE-agent/blob/3ea751c087f32b16e039a2233dd6eefecef325d5/sweagent/agent/history_processors.py
+4. Aider source, `RepoMap`. https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/repomap.py
 5. Zhang et al. (2024), *AutoCodeRover: Autonomous Program Improvement*. https://arxiv.org/abs/2404.05427
 6. Xia et al. (2024), *Agentless: Demystifying LLM-based Software Engineering Agents*. https://arxiv.org/abs/2407.01489
 7. Zhang et al. (2023), *RepoCoder: Repository-Level Code Completion Through Iterative Retrieval and Generation*. https://arxiv.org/abs/2303.12570
-8. Aider documentation, `--max-chat-history-tokens` and automatic summarization. https://aider.chat/docs/config/options.html
-9. Rombaut (2026), *Inside the Scaffold: A Source-Code Taxonomy of Coding Agent Architectures*. https://arxiv.org/abs/2604.03515
-10. Liu et al. (2026), *Dive into Claude Code: The Design Space of Today's and Future AI Agent Systems*. https://arxiv.org/abs/2604.14228
-11. *Compaction as Epistemic Failure: How Agentic LLM Tools Fabricate Confirmed Results from Killed Processes* (2026). https://arxiv.org/abs/2607.13071
+8. Aider source, `ChatSummary`. https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/history.py
+9. Li et al. (2026), *ContextBench: A Benchmark for Context Retrieval in Coding Agents*. https://arxiv.org/abs/2602.05892
