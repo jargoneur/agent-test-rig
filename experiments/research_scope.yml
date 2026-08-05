@@ -1,0 +1,42 @@
+schema_version: 1
+frozen_at: "2026-08-05"
+policy_document: docs/research_scope_and_resource_policy.md
+
+minimum_successful_result:
+  status: required
+  source: professor_alexander_eck
+  model_count: 10
+  model_families:
+    qwen3_5: 6
+    gemma4: 4
+  benchmark: frozen_main_contextbench_protocol
+  scaffolds: all_frozen_main_conditions
+  repeats: frozen_main_repeat_protocol
+  estimated_gpu_hours_per_model: 50
+  estimated_gpu_hours_total: 500
+  pilot_counts_as_result: false
+  partial_family_counts_as_result: false
+
+execution_waves:
+  - id: validation
+    research_result: false
+    purpose: technical_and_protocol_validation
+  - id: minimum_core
+    research_result: true
+    purpose: complete_ten_model_minimum
+  - id: optional_expansion
+    research_result: supplementary
+    append_only: true
+    allowed_when: does_not_endanger_minimum_core
+    protocol_amendment_required: true
+
+shared_resource_policy:
+  other_users_priority: true
+  project_access_mode: opportunistic
+  production_priority_verification_required: true
+  permitted_modes:
+    - scheduler_preemptible
+    - external_yield_signal
+  preserve_completed_runs_on_yield: true
+  requeue_incomplete_blocks_on_yield: true
+  release_model_server_and_allocation_on_yield: true
