@@ -70,7 +70,9 @@ heartbeat_seconds: 30
 idle_seconds: 10
 stop_when_idle: false
 retry_failed_blocks: true
-scheduler_timeout_seconds: 300
+scheduler_timeout_seconds: 60
+completion_timeout_seconds: 300
+completion_retries: 8
 
 resource_policy:
   shared_resource: $SHARED_RESOURCE
