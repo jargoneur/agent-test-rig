@@ -51,6 +51,9 @@ class ResourcePolicy:
         )
         self.availability_command = value.get("availability_command")
         self.release_command = value.get("release_command")
+        self.release_managed_externally = bool(
+            value.get("release_managed_externally", False)
+        )
         self.command_timeout_seconds = max(
             1,
             int(value.get("command_timeout_seconds", 30)),
@@ -88,6 +91,11 @@ class ResourcePolicy:
             raise ValueError(
                 "external_yield_signal mode requires availability_command"
             )
+        if not self.release_command and not self.release_managed_externally:
+            raise ValueError(
+                "Shared resources require release_command or "
+                "release_managed_externally=true"
+            )
 
     @classmethod
     def from_worker_config(
@@ -96,8 +104,15 @@ class ResourcePolicy:
         pause_file: Optional[str] = None,
         signal_event: Any = None,
     ) -> "ResourcePolicy":
+        if "resource_policy" not in worker_config:
+            raise ValueError(
+                "Worker config must explicitly declare resource_policy"
+            )
+        policy = worker_config.get("resource_policy")
+        if not isinstance(policy, dict):
+            raise ValueError("resource_policy must be a YAML mapping")
         return cls(
-            config=worker_config.get("resource_policy") or {},
+            config=policy,
             pause_file=pause_file,
             signal_event=signal_event,
         )
@@ -152,4 +167,5 @@ class ResourcePolicy:
             "pause_file": str(self.pause_file),
             "availability_command_configured": bool(self.availability_command),
             "release_command_configured": bool(self.release_command),
+            "release_managed_externally": self.release_managed_externally,
         }
