@@ -6,11 +6,26 @@ import math
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
+from harness.reproducibility import derive_step_seed
 from scaffolds.base import BaseScaffold
 
 
 class UpstreamScaffold(BaseScaffold):
     """Utilities shared by thin adapters around frozen upstream algorithms."""
+
+    def _resource_checkpoint(self, label: str) -> None:
+        policy = self.options.get("_resource_policy")
+        if policy is not None:
+            policy.checkpoint(label)
+
+    def _next_auxiliary_seed(self) -> Optional[int]:
+        run_seed = self.options.get("_run_seed")
+        if run_seed is None:
+            return None
+        return derive_step_seed(
+            int(run_seed),
+            100_000 + len(self.auxiliary_calls) + 1,
+        )
 
     def _record_auxiliary_call(
         self,
@@ -18,12 +33,14 @@ class UpstreamScaffold(BaseScaffold):
         prompt: str,
         response: str,
         started_at: float,
+        seed: Optional[int],
         options: Optional[Dict[str, Any]] = None,
     ) -> None:
         metadata = dict(getattr(self.model, "last_generation_metadata", {}) or {})
         self.auxiliary_calls.append(
             {
                 "purpose": purpose,
+                "seed": seed,
                 "prompt_characters": len(prompt),
                 "response_characters": len(response or ""),
                 "elapsed_seconds": max(0.0, time.time() - started_at),
@@ -52,14 +69,19 @@ class UpstreamScaffold(BaseScaffold):
         purpose: str,
         options: Optional[Dict[str, Any]] = None,
     ) -> str:
+        seed = self._next_auxiliary_seed()
+        label = "auxiliary:%s:%d" % (purpose, len(self.auxiliary_calls) + 1)
+        self._resource_checkpoint(label + ":before_model_call")
         started = time.time()
         with self._temporary_model_options(options):
-            response = self.model.generate(prompt)
+            response = self.model.generate(prompt, seed=seed)
+        self._resource_checkpoint(label + ":after_model_call")
         self._record_auxiliary_call(
             purpose,
             prompt,
             response,
             started,
+            seed=seed,
             options=options,
         )
         return response
@@ -70,18 +92,23 @@ class UpstreamScaffold(BaseScaffold):
         purpose: str,
         options: Optional[Dict[str, Any]] = None,
     ) -> str:
+        seed = self._next_auxiliary_seed()
+        label = "auxiliary:%s:%d" % (purpose, len(self.auxiliary_calls) + 1)
+        self._resource_checkpoint(label + ":before_model_call")
         started = time.time()
         prompt = json.dumps(messages, indent=2, ensure_ascii=False)
         with self._temporary_model_options(options):
             if hasattr(self.model, "generate_messages"):
-                response = self.model.generate_messages(messages)
+                response = self.model.generate_messages(messages, seed=seed)
             else:
-                response = self.model.generate(prompt)
+                response = self.model.generate(prompt, seed=seed)
+        self._resource_checkpoint(label + ":after_model_call")
         self._record_auxiliary_call(
             purpose,
             prompt,
             response,
             started,
+            seed=seed,
             options=options,
         )
         return response
