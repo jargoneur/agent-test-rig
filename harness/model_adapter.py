@@ -6,6 +6,15 @@ from typing import Any, Dict, Optional
 import requests
 
 
+def _resolved_sampling_options(options: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve framework-neutral sampling controls without inventing defaults."""
+    resolved = dict(options)
+    do_sample = resolved.pop("do_sample", None)
+    if do_sample is False:
+        resolved["temperature"] = 0.0
+    return resolved
+
+
 class OllamaModel:
     def __init__(
         self,
@@ -20,12 +29,16 @@ class OllamaModel:
             "http://localhost:11434",
         )
         self.host = self.host.rstrip("/")
-        self.options = dict(options or {"temperature": 0.2})
+        self.options = dict(options or {})
         self.timeout = timeout
         self.last_generation_metadata: Dict[str, Any] = {}
 
     def effective_options(self, seed=None) -> dict:
-        options = dict(self.options)
+        options = _resolved_sampling_options(self.options)
+        if "repetition_penalty" in options:
+            options["repeat_penalty"] = options.pop("repetition_penalty")
+        if "max_new_tokens" in options and "num_predict" not in options:
+            options["num_predict"] = options.pop("max_new_tokens")
         if seed is not None:
             options["seed"] = int(seed)
         return options
@@ -126,7 +139,7 @@ class OllamaModel:
 
 
 class OpenAICompatibleModel:
-    """Minimal adapter for llama.cpp, vLLM, SGLang and similar servers."""
+    """Adapter for llama.cpp and standard OpenAI-compatible local servers."""
 
     def __init__(
         self,
@@ -135,6 +148,7 @@ class OpenAICompatibleModel:
         api_key: Optional[str] = None,
         options: Optional[Dict[str, Any]] = None,
         timeout: int = 600,
+        backend_name: str = "openai_compatible",
     ):
         self.model_name = model_name
         self.base_url = (
@@ -143,12 +157,13 @@ class OpenAICompatibleModel:
             or "http://localhost:8080/v1"
         ).rstrip("/")
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "local")
-        self.options = dict(options or {"temperature": 0.2})
+        self.options = dict(options or {})
         self.timeout = timeout
+        self.backend_name = backend_name
         self.last_generation_metadata: Dict[str, Any] = {}
 
     def effective_options(self, seed=None) -> dict:
-        options = dict(self.options)
+        options = _resolved_sampling_options(self.options)
         if seed is not None:
             options["seed"] = int(seed)
         return options
@@ -159,22 +174,44 @@ class OpenAICompatibleModel:
             "Content-Type": "application/json",
         }
 
-    def generate(self, prompt, seed=None, timeout=None):
+    def build_payload(self, prompt, seed=None) -> Dict[str, Any]:
         options = self.effective_options(seed)
-        payload = {
+        payload: Dict[str, Any] = {
             "model": self.model_name,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
         }
-        option_map = {
+
+        standard_map = {
             "temperature": "temperature",
             "top_p": "top_p",
             "num_predict": "max_tokens",
+            "max_new_tokens": "max_tokens",
             "seed": "seed",
+            "presence_penalty": "presence_penalty",
+            "frequency_penalty": "frequency_penalty",
+            "stop": "stop",
         }
-        for source, target in option_map.items():
+        for source, target in standard_map.items():
             if source in options:
                 payload[target] = options[source]
+
+        if self.backend_name == "llama_cpp":
+            llama_cpp_map = {
+                "top_k": "top_k",
+                "min_p": "min_p",
+                "repetition_penalty": "repeat_penalty",
+                "repeat_penalty": "repeat_penalty",
+            }
+            for source, target in llama_cpp_map.items():
+                if source in options:
+                    payload[target] = options[source]
+
+        return payload
+
+    def generate(self, prompt, seed=None, timeout=None):
+        options = self.effective_options(seed)
+        payload = self.build_payload(prompt, seed=seed)
 
         response = requests.post(
             "%s/chat/completions" % self.base_url,
@@ -200,12 +237,13 @@ class OpenAICompatibleModel:
             "usage": data.get("usage", {}),
             "system_fingerprint": data.get("system_fingerprint"),
             "options": options,
+            "request_payload": payload,
         }
         return content
 
     def runtime_metadata(self, timeout=60) -> dict:
         metadata = {
-            "backend": "openai_compatible",
+            "backend": self.backend_name,
             "base_url": self.base_url,
             "model_name": self.model_name,
         }
@@ -257,5 +295,6 @@ def create_model(model_spec, options=None, timeout=600):
             api_key=model_spec.get("api_key"),
             options=options,
             timeout=timeout,
+            backend_name=backend,
         )
     raise ValueError("Unsupported model backend: %s" % backend)
