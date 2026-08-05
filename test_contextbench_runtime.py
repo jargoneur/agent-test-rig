@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -90,6 +91,7 @@ def test_contextbench_trajectory_preserves_exact_read_and_search_spans():
 def test_llama_cpp_registry_builds_a_single_gpu_server_command(tmp_path):
     artifact = tmp_path / "model.gguf"
     artifact.write_bytes(b"gguf")
+    artifact_sha256 = hashlib.sha256(artifact.read_bytes()).hexdigest()
     registry = tmp_path / "registry.yml"
     registry.write_text(
         yaml.safe_dump(
@@ -97,6 +99,7 @@ def test_llama_cpp_registry_builds_a_single_gpu_server_command(tmp_path):
                 "models": {
                     "model-a": {
                         "artifact": str(artifact),
+                        "sha256": artifact_sha256,
                         "alias": "model-a",
                         "context_size": 8192,
                         "gpu_layers": "all",
@@ -123,7 +126,7 @@ def test_llama_cpp_registry_builds_a_single_gpu_server_command(tmp_path):
     entry = manager._entry("model-a")
     command = manager._command("model-a", entry)
 
-    assert manager.model_ids() == ["model-a"]
+    assert manager.model_ids(verify=True) == ["model-a"]
     assert Path(command[0]) == Path("/bin/true").resolve()
     assert command[command.index("--ctx-size") + 1] == "8192"
     assert command[command.index("--split-mode") + 1] == "none"
