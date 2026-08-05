@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +55,38 @@ def load_registry(path: Path):
     return value["models"]
 
 
+def verify_contextbench_evaluator(contextbench: Path) -> None:
+    evaluator_python = ROOT / ".venv-contextbench" / "bin" / "python"
+    if not evaluator_python.is_file():
+        raise FileNotFoundError(
+            "ContextBench evaluator environment is missing: %s" % evaluator_python
+        )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(contextbench)
+    result = subprocess.run(
+        [
+            str(evaluator_python),
+            "-c",
+            (
+                "from contextbench.extractors.treesitter import available; "
+                "assert available(), 'tree-sitter unavailable'; "
+                "print('available')"
+            ),
+        ],
+        cwd=contextbench,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "ContextBench evaluator preflight failed: %s"
+            % (result.stderr or result.stdout).strip()
+        )
+    print("ContextBench evaluator:", result.stdout.strip())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate the complete agent-rig stack.")
     parser.add_argument(
@@ -71,6 +104,7 @@ def main() -> None:
         raise RuntimeError("Full upstream stack requires Python 3.11 or newer")
 
     print("Python:", sys.version.split()[0])
+    contextbench = None
     for component in (
         "contextbench",
         "sweagent_last5",
@@ -79,7 +113,12 @@ def main() -> None:
         "aider_chat_summary",
         "llama_cpp_runtime",
     ):
-        print("Upstream:", component, upstream_path(component))
+        path = upstream_path(component)
+        print("Upstream:", component, path)
+        if component == "contextbench":
+            contextbench = path
+    assert contextbench is not None
+    verify_contextbench_evaluator(contextbench)
 
     probe = ProbeModel()
     for scaffold_name in (
