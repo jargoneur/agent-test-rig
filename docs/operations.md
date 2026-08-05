@@ -12,8 +12,8 @@ not assigned manually.
 - Frozen upstream sources: `.upstreams/`.
 - Model artifacts and registry: `model_artifacts/`.
 - Shared repository mirror cache: `.cache/repos/` by default.
-- Scheduler database: `scheduler/contextbench.sqlite3` by default.
-- Central completed records: inside the scheduler database.
+- Scheduler databases: `scheduler/*.sqlite3`.
+- Central completed records: inside the selected scheduler database.
 - Worker-local logs and resumable run files: `distributed_results/`.
 
 The separate evaluator environment is intentional. Frozen Aider and frozen
@@ -48,7 +48,7 @@ The bootstrap performs all of the following:
 2. creates the worker and evaluator environments;
 3. installs the runtime dependencies;
 4. checks out every frozen upstream at its exact commit;
-5. installs frozen Aider and SWE-agent;
+5. installs the frozen Aider dependency lock;
 6. compiles the pinned llama.cpp `llama-server` and `llama-quantize`;
 7. creates the frozen 150-task ContextBench cache and gold parquet;
 8. runs the compile and unit-test suite.
@@ -104,21 +104,22 @@ The preflight verifies:
 - the llama-server binary;
 - actual model loading and clean shutdown on the selected GPU.
 
-## 4. Generate a real smoke manifest
+## 4. Generate the four-GPU smoke manifest
 
 ```bash
 python plan_experiment.py \
-  --config experiments/contextbench_smoke.yml \
-  --output jobs/contextbench_smoke.jsonl
+  --config experiments/contextbench_plato_smoke.yml \
+  --output jobs/contextbench_plato_smoke.jsonl
 ```
 
 Expected dimensions:
 
 ```text
-1 ContextBench task × 1 model × 4 real scaffolds × 1 repeat = 4 runs
+4 ContextBench tasks × 1 model × 4 real scaffolds × 1 repeat = 16 runs
 ```
 
-The real conditions are:
+The scheduler groups these into four paired blocks, so all four Plato workers
+receive real work. Every block contains all four conditions:
 
 - `sweagent_last5`
 - `aider_repomap`
@@ -127,8 +128,11 @@ The real conditions are:
 
 ## 5. Start Plato
 
+Use a separate database for the final smoke test:
+
 ```bash
-bash scripts/start_plato.sh jobs/contextbench_smoke.jsonl
+export SCHEDULER_DB=scheduler/contextbench_plato_smoke.sqlite3
+bash scripts/start_plato.sh jobs/contextbench_plato_smoke.jsonl
 ```
 
 This starts:
@@ -169,8 +173,7 @@ the queue.
 
 ## 6. Attach the local laptop to the same queue
 
-On the laptop, bootstrap without requiring a CUDA build when CPU execution is
-intended, or with CUDA when a supported NVIDIA GPU is available:
+On the laptop, a CPU llama.cpp build is sufficient for the 0.8B smoke model:
 
 ```bash
 cd ~/agent-test-rig
@@ -179,8 +182,9 @@ git pull --ff-only
 bash scripts/bootstrap.sh --prepare-contextbench
 ```
 
-Provision or copy a model artifact and registry entry whose model ID matches a
-model in the central manifest. Artifact hashes must match the registry.
+Copy the smoke GGUF and `model_artifacts/registry.yml` from Plato, preserving the
+same relative artifact path and SHA-256, or provision the exact same revision
+locally.
 
 Open and keep an SSH tunnel running:
 
@@ -208,13 +212,14 @@ scheduler sends it only compatible paired blocks.
 
 ## 7. Export and evaluate completed results
 
-On Plato, while the scheduler is stopped or through a separate database copy:
+After stopping the smoke system:
 
 ```bash
 source .venv/bin/activate
+rm -rf distributed_results/scheduler_export
 
 python scheduler_server.py \
-  --database scheduler/contextbench.sqlite3 \
+  --database scheduler/contextbench_plato_smoke.sqlite3 \
   --export-results distributed_results/scheduler_export
 
 python scripts/evaluate_contextbench.py \
@@ -226,14 +231,14 @@ python scripts/evaluate_contextbench.py \
 Evaluation is performed independently for every model × scaffold × repeat
 condition by the pinned ContextBench evaluator.
 
-## 8. Generate the six-Qwen core queue
+## 8. Generate the provisional six-Qwen validation queue
 
 After all six exact model artifacts and registry entries are provisioned:
 
 ```bash
 python plan_experiment.py \
   --config experiments/contextbench_qwen_core.yml \
-  --output jobs/contextbench_qwen3_5_core.jsonl
+  --output jobs/contextbench_qwen3_5_provisional_validation.jsonl
 ```
 
 This queue contains:
@@ -242,7 +247,8 @@ This queue contains:
 6 models × 150 tasks × 4 scaffolds × 3 repeats = 10,800 runs
 ```
 
-The full ten-model 18,000-run manifest must be generated only after the four
-Gemma 4 checkpoint IDs and all final inference profiles are resolved and frozen.
-The six-Qwen manifest is operationally complete but does not replace that
-scientific minimum.
+It is deliberately marked `provisional_validation_only`. It validates the full
+operational scale but is not the frozen scientific core until exact checkpoint
+revisions, artifact hashes, chat/thinking modes, and official per-checkpoint
+generation profiles are locked. The full ten-model 18,000-run manifest also
+requires confirmation of the four Gemma 4 checkpoint IDs.
