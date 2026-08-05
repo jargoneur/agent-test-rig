@@ -90,6 +90,12 @@ if [[ "$ready" -ne 1 ]]; then
     exit 1
 fi
 
+# A clean stop persists the pause state. Starting a new supervised session is
+# the explicit operator decision to resume claims.
+.venv/bin/python scripts/scheduler_control.py resume \
+    --scheduler-url http://127.0.0.1:8787 \
+    --token "$TOKEN" >/dev/null
+
 for index in $(seq 0 $((WORKER_COUNT - 1))); do
     gpu="${GPU_UUIDS[$index]}"
     port="$((8080 + index))"
