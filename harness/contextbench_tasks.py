@@ -51,7 +51,7 @@ def contextbench_task_ids(
 
 
 def _infer_repo(original_inst_id: str) -> str:
-    match = re.match(r"^(?P<org>[^_]+)__(?P<repo>[^-]+)-\d+$", original_inst_id)
+    match = re.match(r"^(?P<org>.+?)__(?P<repo>.+)-\d+$", original_inst_id)
     if not match:
         return ""
     return "%s/%s" % (match.group("org"), match.group("repo"))
