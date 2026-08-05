@@ -15,8 +15,16 @@ WORKER_COUNT="${PLATO_WORKERS:-1}"
 MODEL_IDS="${MODEL_IDS:-}"
 RESOURCE_CLASSES="${RESOURCE_CLASSES:-}"
 WAVES="${WAVES:-}"
+SELECTED_GPU_UUIDS_RAW="${PLATO_GPU_UUIDS:-}"
 STORAGE_SOFT_LIMIT_GIB="${PLATO_STORAGE_SOFT_LIMIT_GIB:-80}"
 STORAGE_RESERVE_GIB="${PLATO_STORAGE_RESERVE_GIB:-5}"
+
+trim() {
+    local value="$1"
+    value="${value#${value%%[![:space:]]*}}"
+    value="${value%${value##*[![:space:]]}}"
+    printf '%s' "$value"
+}
 
 if [[ ! -x .venv/bin/python ]]; then
     echo "Missing .venv. Run: bash scripts/bootstrap.sh --require-cuda --prepare-contextbench" >&2
@@ -46,12 +54,56 @@ if [[ "$MODEL_IDS" == *,* ]]; then
     echo "Plato accepts exactly one active MODEL_IDS value, not a comma-separated list." >&2
     exit 1
 fi
-ACTIVE_MODEL_ID="${MODEL_IDS#${MODEL_IDS%%[![:space:]]*}}"
-ACTIVE_MODEL_ID="${ACTIVE_MODEL_ID%${ACTIVE_MODEL_ID##*[![:space:]]}}"
+ACTIVE_MODEL_ID="$(trim "$MODEL_IDS")"
 if [[ -z "$ACTIVE_MODEL_ID" ]]; then
     echo "MODEL_IDS resolved to an empty model ID." >&2
     exit 1
 fi
+
+if [[ -z "$SELECTED_GPU_UUIDS_RAW" ]]; then
+    echo "Set PLATO_GPU_UUIDS explicitly after checking nvidia-smi." >&2
+    echo "Example: export PLATO_GPU_UUIDS=GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" >&2
+    exit 1
+fi
+IFS=',' read -r -a RAW_SELECTED_GPU_UUIDS <<< "$SELECTED_GPU_UUIDS_RAW"
+SELECTED_GPU_UUIDS=()
+for raw_uuid in "${RAW_SELECTED_GPU_UUIDS[@]}"; do
+    gpu_uuid="$(trim "$raw_uuid")"
+    [[ -n "$gpu_uuid" ]] && SELECTED_GPU_UUIDS+=("$gpu_uuid")
+done
+if [[ "${#SELECTED_GPU_UUIDS[@]}" -ne "$WORKER_COUNT" ]]; then
+    echo "PLATO_GPU_UUIDS contains ${#SELECTED_GPU_UUIDS[@]} UUIDs but PLATO_WORKERS=$WORKER_COUNT." >&2
+    exit 1
+fi
+
+mapfile -t AVAILABLE_GPU_UUIDS < <(nvidia-smi --query-gpu=uuid --format=csv,noheader)
+declare -A AVAILABLE_GPU_SET=()
+declare -A SELECTED_GPU_SET=()
+for gpu_uuid in "${AVAILABLE_GPU_UUIDS[@]}"; do
+    AVAILABLE_GPU_SET["$(trim "$gpu_uuid")"]=1
+done
+for gpu_uuid in "${SELECTED_GPU_UUIDS[@]}"; do
+    if [[ -z "${AVAILABLE_GPU_SET[$gpu_uuid]:-}" ]]; then
+        echo "Selected GPU UUID is not present on Plato: $gpu_uuid" >&2
+        exit 1
+    fi
+    if [[ -n "${SELECTED_GPU_SET[$gpu_uuid]:-}" ]]; then
+        echo "Selected GPU UUID is duplicated: $gpu_uuid" >&2
+        exit 1
+    fi
+    SELECTED_GPU_SET["$gpu_uuid"]=1
+done
+
+ACTIVE_COMPUTE_UUIDS="$({
+    nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null || true
+} | sed '/^[[:space:]]*$/d')"
+for gpu_uuid in "${SELECTED_GPU_UUIDS[@]}"; do
+    if grep -Fxq "$gpu_uuid" <<< "$ACTIVE_COMPUTE_UUIDS"; then
+        echo "Selected GPU already has an active compute process: $gpu_uuid" >&2
+        echo "Choose another GPU after reviewing nvidia-smi." >&2
+        exit 1
+    fi
+done
 
 .venv/bin/python scripts/plato_model_slot.py \
     --registry "$REGISTRY" \
@@ -60,12 +112,6 @@ fi
 .venv/bin/python scripts/storage_preflight.py \
     --soft-limit-gib "$STORAGE_SOFT_LIMIT_GIB" \
     --minimum-filesystem-free-gib "$STORAGE_RESERVE_GIB"
-
-mapfile -t GPU_UUIDS < <(nvidia-smi --query-gpu=uuid --format=csv,noheader)
-if [[ "$WORKER_COUNT" -gt "${#GPU_UUIDS[@]}" ]]; then
-    echo "Requested $WORKER_COUNT workers but found ${#GPU_UUIDS[@]} NVIDIA GPUs." >&2
-    exit 1
-fi
 
 mkdir -p "$RUNTIME_DIR" "$LOG_DIR" scheduler "$BACKUP_DIR"
 rm -f "$RUNTIME_DIR"/PAUSE "$RUNTIME_DIR"/worker-*.pid
@@ -121,7 +167,7 @@ fi
     --token "$TOKEN" >/dev/null
 
 for index in $(seq 0 $((WORKER_COUNT - 1))); do
-    gpu="${GPU_UUIDS[$index]}"
+    gpu="${SELECTED_GPU_UUIDS[$index]}"
     port="$((8080 + index))"
     worker_id="plato-v100-gpu${index}"
 
@@ -149,6 +195,7 @@ sleep 3
 echo "Plato system started."
 echo "Manifest: $MANIFEST"
 echo "Active Plato model: $ACTIVE_MODEL_ID"
+echo "Selected GPU UUIDs: ${SELECTED_GPU_UUIDS[*]}"
 echo "Scheduler database: $SCHEDULER_DB"
 echo "Backup directory: $BACKUP_DIR"
 echo "Workers started: $WORKER_COUNT"
