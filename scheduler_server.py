@@ -3,15 +3,90 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from harness.distributed_scheduler_store import DistributedSchedulerStore
 
 
+class SchedulerHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+
+class BackupManager:
+    def __init__(
+        self,
+        store: DistributedSchedulerStore,
+        directory: str,
+        interval_seconds: int,
+        retain: int,
+    ):
+        self.store = store
+        self.directory = Path(directory).expanduser().resolve()
+        self.interval_seconds = max(60, int(interval_seconds))
+        self.retain = max(1, int(retain))
+        self.stop_event = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+        self.last_backup: Optional[Dict[str, Any]] = None
+        self.last_error: Optional[str] = None
+
+    def create(self, label: Optional[str] = None) -> Dict[str, Any]:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        suffix = "-%s" % label if label else ""
+        path = self.directory / ("scheduler-%s%s.sqlite3" % (timestamp, suffix))
+        result = self.store.backup_database(str(path))
+        self.last_backup = result
+        self.last_error = None
+        self.prune()
+        return result
+
+    def prune(self) -> None:
+        backups = sorted(
+            self.directory.glob("scheduler-*.sqlite3"),
+            key=lambda value: value.stat().st_mtime,
+            reverse=True,
+        )
+        for path in backups[self.retain :]:
+            path.unlink(missing_ok=True)
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.interval_seconds):
+            try:
+                self.create()
+            except Exception as error:
+                self.last_error = str(error)
+                print("Scheduler backup failed:", error, flush=True)
+
+    def start(self) -> None:
+        self.thread = threading.Thread(
+            target=self._run,
+            name="scheduler-backup",
+            daemon=True,
+        )
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=10)
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "directory": str(self.directory),
+            "interval_seconds": self.interval_seconds,
+            "retain": self.retain,
+            "last_backup": self.last_backup,
+            "last_error": self.last_error,
+        }
+
+
 class SchedulerHandler(BaseHTTPRequestHandler):
-    server_version = "AgentRigScheduler/1.1"
+    server_version = "AgentRigScheduler/1.2"
 
     def _json_response(self, status: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -42,11 +117,22 @@ class SchedulerHandler(BaseHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         if path == "/health":
-            pause = self.server.store.pause_state()
-            self._json_response(200, {"status": "ok", "control": pause})
+            integrity = self.server.store.integrity_check(thorough=False)
+            status = 200 if integrity.get("ok") else 503
+            self._json_response(
+                status,
+                {
+                    "status": "ok" if status == 200 else "degraded",
+                    "control": self.server.store.pause_state(),
+                    "integrity": integrity,
+                    "backup": self.server.backup_manager.status(),
+                },
+            )
             return
         if path == "/status":
-            self._json_response(200, self.server.store.status())
+            value = self.server.store.status()
+            value["backup"] = self.server.backup_manager.status()
+            self._json_response(200, value)
             return
         if path == "/control":
             self._json_response(200, self.server.store.pause_state())
@@ -116,6 +202,10 @@ class SchedulerHandler(BaseHTTPRequestHandler):
                 )
             elif path == "/resume":
                 result = self.server.store.set_paused(False, None)
+            elif path == "/backup":
+                result = self.server.backup_manager.create(
+                    str(payload.get("label")) if payload.get("label") else "manual"
+                )
             else:
                 self._json_response(404, {"error": "not_found"})
                 return
@@ -126,7 +216,7 @@ class SchedulerHandler(BaseHTTPRequestHandler):
             self._json_response(500, {"error": str(error)})
 
     def log_message(self, format: str, *args: Any) -> None:
-        print("%s - %s" % (self.address_string(), format % args))
+        print("%s - %s" % (self.address_string(), format % args), flush=True)
 
 
 def main() -> None:
@@ -137,21 +227,52 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--token", default=os.environ.get("SCHEDULER_TOKEN"))
     parser.add_argument("--export-results")
+    parser.add_argument("--backup-directory", default="scheduler/backups")
+    parser.add_argument("--backup-interval-seconds", type=int, default=900)
+    parser.add_argument("--backup-retain", type=int, default=96)
     args = parser.parse_args()
 
     store = DistributedSchedulerStore(args.database)
+    integrity = store.integrity_check(thorough=True)
+    if not integrity.get("ok"):
+        raise RuntimeError("Scheduler database failed integrity check: %s" % integrity)
+
     for manifest in args.manifest or []:
         print("Imported:", manifest, store.import_manifest(manifest))
     if args.export_results:
         print("Exported results:", store.export_results(args.export_results))
         return
 
-    server = ThreadingHTTPServer((args.host, args.port), SchedulerHandler)
+    backup_manager = BackupManager(
+        store,
+        directory=args.backup_directory,
+        interval_seconds=args.backup_interval_seconds,
+        retain=args.backup_retain,
+    )
+    startup_backup = backup_manager.create("startup")
+    print("Startup backup:", startup_backup)
+    backup_manager.start()
+
+    server = SchedulerHTTPServer((args.host, args.port), SchedulerHandler)
     server.store = store
     server.scheduler_token = args.token
+    server.backup_manager = backup_manager
     print("Scheduler listening on http://%s:%d" % (args.host, args.port))
     print("Database:", args.database)
-    server.serve_forever()
+    print("Backup directory:", args.backup_directory)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("Scheduler shutdown requested.")
+    finally:
+        server.shutdown()
+        server.server_close()
+        backup_manager.stop()
+        try:
+            final_backup = backup_manager.create("shutdown")
+            print("Shutdown backup:", final_backup)
+        except Exception as error:
+            print("Shutdown backup failed:", error)
 
 
 if __name__ == "__main__":
