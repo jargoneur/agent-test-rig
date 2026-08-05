@@ -1,0 +1,39 @@
+schema_version: 1
+status: pending_model_selection
+policy_document: docs/model_inference_policy.md
+
+selection_rule:
+  primary_profile: official_recommended_coding_agent_or_instruction_profile
+  source_priority:
+    - exact_checkpoint_model_card
+    - official_repository_documentation
+    - official_family_inference_example
+    - bundled_generation_config
+  unofficial_presets_allowed: false
+  local_tuning_allowed: false
+
+paired_execution:
+  same_profile_across_scaffolds: true
+  same_seed_across_scaffolds: true
+  same_profile_across_workers: true
+  reject_runtime_mismatch: true
+
+required_profile_fields:
+  - model_id
+  - model_revision
+  - model_artifact_sha256
+  - quantization
+  - quantized_artifact_sha256
+  - tokenizer_revision
+  - tokenizer_sha256
+  - chat_template_sha256
+  - backend
+  - backend_version
+  - recommendation_source
+  - recommendation_source_revision
+  - resolved_generation_options
+  - resolved_stop_conditions
+  - context_configuration
+  - profile_sha256
+
+models: {}
