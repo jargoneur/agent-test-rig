@@ -60,10 +60,11 @@ uv pip install --python .venv-contextbench/bin/python -r requirements/contextben
 
 bash scripts/fetch_upstreams.sh
 
-# Install the dependency lock shipped by the frozen Aider checkout. The Aider
-# and SWE-agent source trees themselves remain untouched and are imported from
-# their verified commits through harness.upstreams.
+# Install dependency locks shipped by the frozen upstreams. Their source trees
+# remain untouched and are imported from the verified commits.
 uv pip install --python .venv/bin/python -r .upstreams/aider/requirements.txt
+uv pip install --python .venv/bin/python \
+    -r .upstreams/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
 
 if [[ "$SKIP_LLAMA_BUILD" -eq 0 ]]; then
     CUDA_FLAG=OFF
