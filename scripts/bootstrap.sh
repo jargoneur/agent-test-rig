@@ -138,7 +138,8 @@ PY
     test_model_profiles.py \
     test_resource_policy.py \
     test_worker_configs.py \
-    test_contextbench_runtime.py
+    test_contextbench_runtime.py \
+    test_scaffold_runtime.py
 
 echo
 echo "Bootstrap complete."
