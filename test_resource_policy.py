@@ -1,0 +1,77 @@
+import sys
+from pathlib import Path
+
+import pytest
+
+from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
+
+
+def test_local_resource_policy_is_allowed_without_external_verification(tmp_path):
+    policy = ResourcePolicy(
+        {
+            "shared_resource": False,
+            "mode": "local_exclusive",
+            "pause_file": str(tmp_path / "PAUSE"),
+        }
+    )
+
+    policy.checkpoint("test")
+    assert policy.metadata()["shared_resource"] is False
+
+
+def test_shared_worker_is_blocked_until_other_user_priority_is_verified():
+    with pytest.raises(ValueError, match="blocked until"):
+        ResourcePolicy(
+            {
+                "shared_resource": True,
+                "other_users_priority": True,
+                "mode": "scheduler_preemptible",
+                "priority_mechanism_verified": False,
+                "verification_reference": "pending",
+            }
+        )
+
+
+def test_shared_worker_requires_written_verification_reference():
+    with pytest.raises(ValueError, match="verification_reference"):
+        ResourcePolicy(
+            {
+                "shared_resource": True,
+                "other_users_priority": True,
+                "mode": "scheduler_preemptible",
+                "priority_mechanism_verified": True,
+            }
+        )
+
+
+def test_pause_file_requests_yield_at_safe_checkpoint(tmp_path):
+    pause_file = tmp_path / "PAUSE"
+    policy = ResourcePolicy(
+        {
+            "shared_resource": False,
+            "mode": "local_exclusive",
+            "pause_file": str(pause_file),
+        }
+    )
+    pause_file.write_text("yield\n", encoding="utf-8")
+
+    with pytest.raises(ResourceYieldRequested, match="pause_file"):
+        policy.checkpoint("before_scaffold")
+
+
+def test_external_availability_command_fails_closed(tmp_path):
+    command = '"%s" -c "import sys; sys.exit(1)"' % sys.executable
+    policy = ResourcePolicy(
+        {
+            "shared_resource": True,
+            "other_users_priority": True,
+            "mode": "external_yield_signal",
+            "priority_mechanism_verified": True,
+            "verification_reference": "resource-owner-test-procedure",
+            "availability_command": command,
+            "pause_file": str(tmp_path / "PAUSE"),
+        }
+    )
+
+    with pytest.raises(ResourceYieldRequested, match="availability_command"):
+        policy.checkpoint("before_block_claim")
