@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from harness.contextbench_tasks import contextbench_task_ids
 from harness.experiment_jobs import (
     build_jobs,
     load_jobs,
@@ -14,13 +15,16 @@ from harness.experiment_jobs import (
     write_jobs,
 )
 from harness.model_profiles import resolve_models_from_lock
-from harness.reproducibility import write_json
+from harness.reproducibility import PROJECT_ROOT, write_json
 
 
 def _resolve_path(value: str, config_path: Path) -> Path:
-    candidate = Path(value)
-    if candidate.is_absolute() or candidate.exists():
+    candidate = Path(value).expanduser()
+    if candidate.is_absolute():
         return candidate
+    root_candidate = PROJECT_ROOT / candidate
+    if root_candidate.exists():
+        return root_candidate
     return config_path.parent / candidate
 
 
@@ -41,6 +45,26 @@ def _resolve_models(config, config_path: Path):
         str(lock_path),
         profile_keys=profile_keys,
         allow_pending=bool(config.get("allow_pending_model_profiles", False)),
+    )
+
+
+def _resolve_tasks(config, config_path: Path):
+    source = config.get("task_source")
+    if not source:
+        return list(config["tasks"])
+    if config.get("tasks"):
+        raise ValueError("Use either tasks or task_source, not both")
+    if not isinstance(source, dict):
+        raise TypeError("task_source must be a mapping")
+    source_type = str(source.get("type") or "")
+    if source_type != "contextbench":
+        raise ValueError("Unsupported task_source.type: %s" % source_type)
+    cache_value = source.get("cache", "benchmarks/contextbench/tasks.jsonl")
+    cache_path = _resolve_path(str(cache_value), config_path)
+    limit = source.get("limit")
+    return contextbench_task_ids(
+        str(cache_path),
+        limit=int(limit) if limit is not None else None,
     )
 
 
@@ -67,8 +91,9 @@ def main():
     )
     generation_options = dict(config.get("generation_options") or {})
     models = _resolve_models(config, config_path)
+    tasks = _resolve_tasks(config, config_path)
     jobs = build_jobs(
-        tasks=list(config["tasks"]),
+        tasks=tasks,
         models=models,
         scaffolds=list(config["scaffolds"]),
         repeats=int(config.get("repeats", 1)),
@@ -92,6 +117,7 @@ def main():
     )
 
     print("Experiment:", experiment_id)
+    print("Tasks:", len(tasks))
     print("Jobs:", len(jobs))
     print("Manifest:", output_path)
     print("Metadata:", metadata_path)
