@@ -1,30 +1,19 @@
 # Model Selection for the Context-Management Study
 
-**Status:** family-level plan restored; exact Gemma 4 subset requires clarification  
-**Date:** 2026-08-05
+**Status:** family membership fixed; exact revisions and deployment profiles pending  
+**Date:** 2026-08-06
 
-## Authoritative design source
+## Binding study design
 
-The model plan is the recommendation from Prof. Alexander Eck:
+The base experiment compares two complete selected instruction-tuned model families:
 
-- six Qwen3.5 sizes, ranging from the 0.8B dense model to the 35B MoE model;
-- four Gemma 4 sizes;
-- ten models in total;
-- every selected deployment must fit, including KV cache, within 32 GB VRAM;
-- 8-bit weight quantization and 16-bit KV cache are the recommended provisioning target;
-- roughly 50 GPU-hours per model, including prefill, for approximately 500 GPU-hours overall.
+- all six Qwen3.5 checkpoints in the selected official ladder;
+- all five official Gemma 4 instruction-tuned sizes;
+- eleven models in total.
 
-The previous Qwen2.5-Coder ladder plus four unrelated coding anchors was not part of this plan and has been withdrawn.
+The earlier ten-model plan and the attempt to choose four Gemma checkpoints are superseded. A model is not removed merely to preserve the old run count.
 
-## Minimum, not ceiling
-
-The ten-model programme is the **minimum successful research result** for this project. A pilot, a partial family, or a reduced model ladder is a technical validation stage and does not replace the minimum.
-
-The project may be expanded during execution when time and compute remain available. Expansion is append-only: additional models, tasks, repetitions, scaffold variants, or diagnostics receive a new wave and protocol amendment. They may not narrow, replace, or endanger completion of the ten-model core. The binding scope and expansion policy are recorded in `docs/research_scope_and_resource_policy.md` and `experiments/research_scope.yml`.
-
-## Confirmed Qwen3.5 ladder
-
-The current official post-trained Qwen3.5 checkpoints matching the six-size description are:
+## Qwen3.5 ladder
 
 1. `Qwen/Qwen3.5-0.8B`
 2. `Qwen/Qwen3.5-2B`
@@ -33,50 +22,73 @@ The current official post-trained Qwen3.5 checkpoints matching the six-size desc
 5. `Qwen/Qwen3.5-27B`
 6. `Qwen/Qwen3.5-35B-A3B`
 
-The first five are dense checkpoints; the final checkpoint is a 35B-total, approximately 3B-active mixture-of-experts model.
+## Gemma 4 ladder
 
-## Gemma 4 discrepancy to resolve
+1. `google/gemma-4-E2B-it`
+2. `google/gemma-4-E4B-it`
+3. `google/gemma-4-12B-it`
+4. `google/gemma-4-26B-A4B-it`
+5. `google/gemma-4-31B-it`
 
-The supervisor email describes **four Gemma 4 sizes, three of them MoE**. The currently published official Gemma 4 family does not match that description exactly. Official sources currently list five instruction-tuned sizes:
+These five official instruction checkpoints define the Gemma 4 family used by the core experiment. The earlier supervisor wording describing four sizes and three MoE models does not match the official family and is no longer used as a selection rule.
 
-- `google/gemma-4-E2B-it`
-- `google/gemma-4-E4B-it`
-- `google/gemma-4-12B-it`
-- `google/gemma-4-26B-A4B-it`
-- `google/gemma-4-31B-it`
+## Core size
 
-Current official architecture documentation classifies E2B, E4B, 12B and 31B as dense/PLE variants and 26B-A4B as the MoE variant. Therefore the exact four-model Gemma subset must not be guessed or frozen silently.
+```text
+11 models × 150 tasks × 4 scaffolds × 3 repeats = 19,800 runs
+```
 
-Likely explanations include a preliminary family description, a typo in the email, or an intended four-model subset constrained by 32 GB VRAM. This must be clarified before checkpoint IDs are locked.
+Approximately 50 GPU-hours per model, including prefill, remains a planning estimate. Applied linearly, the eleven-model core is approximately 550 GPU-hours; this is not a measured runtime claim.
 
-## Hardware constraint
+## Hardware and deployment constraint
 
-The scientific deployment condition is provisionally:
+The intended deployment envelope remains:
 
-- one GPU with 32 GB VRAM;
-- 8-bit weight quantization;
-- 16-bit KV cache;
+- one GPU with 32 GB VRAM per worker;
+- 8-bit weight quantization target;
+- 16-bit KV cache target;
 - common active context limit determined after measured memory profiling;
-- model plus KV cache, runtime buffers and safety margin must fit without CPU offload.
+- model, KV cache, runtime buffers and safety margin must fit without CPU offload for the one-GPU condition.
 
-The earlier Q4_K_M/llama.cpp assumption is no longer treated as the primary plan because it conflicts with the supervisor's explicit 8-bit recommendation. Backend and exact quantization format remain pending hardware and model-support validation.
+This envelope must be measured for every checkpoint. If a complete-family member does not fit under the intended profile, that result is documented as an explicit deployment constraint and resolved through a protocol decision. The model must not be silently removed.
 
-## Shared-resource constraint
+## Distributed execution requirement
 
-All shared compute is opportunistic. Other users have priority over this project. Production workers on shared machines are blocked until the external priority or preemption mechanism has been verified and documented. A pause or yield request releases the current scheduler lease at the next safe checkpoint, keeps completed runs, and returns the incomplete block to the queue.
+Every exact model artifact is content-addressed by SHA-256. A worker may advertise a model only when:
+
+1. the artifact exists locally;
+2. its hash matches the registry;
+3. the local runtime binary is available;
+4. the worker's declared resource class is sufficient.
+
+The same exact artifact and frozen inference profile are used across all tasks, scaffolds, repeats and workers for a model.
 
 ## Inference settings
 
-For each final checkpoint, official recommended sampling, thinking mode, chat template and tool-use configuration will be frozen. The same resolved profile is used across every scaffold, task, repeat and worker for that model.
+For each checkpoint, the following remain to be resolved and frozen from authoritative sources:
+
+- exact source revision;
+- recommended instruction/coding/agentic generation profile;
+- tokenizer revision and hash;
+- chat template and hash;
+- thinking mode where applicable;
+- quantized artifact hash;
+- measured peak VRAM including prefill;
+- final common context limit.
 
 ## Freeze gate
 
-No benchmark manifest may be generated until:
+The final 19,800-run manifest may be generated only after:
 
-1. the four Gemma 4 checkpoints are confirmed;
-2. every checkpoint and revision is pinned;
-3. recommended inference settings are extracted from official sources;
-4. an 8-bit artifact and 16-bit KV-cache configuration are validated;
-5. measured peak VRAM, including prefill, remains below 32 GB with a safety margin;
-6. artifact, tokenizer, template and profile hashes are recorded;
-7. shared-resource priority is verified before any shared production worker is enabled.
+1. every source revision resolves to an exact immutable revision;
+2. official generation profiles are recorded;
+3. every source, tokenizer and template hash is recorded;
+4. every int8 artifact is built and hashed;
+5. FP16 KV-cache behavior is validated;
+6. measured peak VRAM including prefill is recorded with safety margin;
+7. every worker advertises only locally verified artifacts;
+8. current-head distributed smoke tests pass.
+
+## Plato operating permission
+
+Prof. Alexander Eck has stated that computation may run on Plato until he contacts the user. There is no user-visible scheduler or interest-management system. Plato therefore uses `manual_operator` mode and must not be described as automatically preemptible. The operator remains responsible for observing the machine and obeying a direct stop request.
