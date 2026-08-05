@@ -22,6 +22,16 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def sha256_json(value) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256_text(payload)
+
+
 def derive_run_seed(
     base_seed: int,
     task_id: str,
@@ -101,19 +111,41 @@ def directory_sha256(root: Path) -> str:
 
 
 def task_metadata(task: dict) -> dict:
-    task_dir = Path(task["task_dir"]).resolve()
     fixture_path = task.get("fixture_path")
     repo_path = task.get("repo_path")
-
+    excluded = {"issue", "task_dir", "contextbench_metadata"}
     metadata = {
         "id": task["id"],
+        "source": task.get("source", "local"),
         "issue_sha256": sha256_text(task["issue"]),
         "task_config": {
             key: value
             for key, value in task.items()
-            if key not in {"issue", "task_dir"}
+            if key not in excluded
         },
     }
+
+    if task.get("source") == "contextbench":
+        contextbench = task.get("contextbench_metadata") or {}
+        metadata.update(
+            {
+                "instance_id": task.get("instance_id"),
+                "original_inst_id": task.get("original_inst_id"),
+                "bench": task.get("bench"),
+                "repo": task.get("repo"),
+                "base_commit": task.get("base_commit"),
+                "contextbench_record_sha256": sha256_json(contextbench),
+            }
+        )
+        manifest = PROJECT_ROOT / "benchmarks" / "contextbench" / "manifest.json"
+        if manifest.is_file():
+            metadata["contextbench_manifest_sha256"] = file_sha256(manifest)
+        return metadata
+
+    task_dir_value = task.get("task_dir")
+    if not task_dir_value:
+        return metadata
+    task_dir = Path(task_dir_value).resolve()
 
     if fixture_path:
         fixture = (PROJECT_ROOT / fixture_path).resolve()
@@ -126,11 +158,12 @@ def task_metadata(task: dict) -> dict:
         metadata["repo_sha256"] = directory_sha256(repo)
 
     config_path = task_dir / "task.yml"
-    issue_path = task_dir / task["issue_file"]
+    issue_file = task.get("issue_file")
+    issue_path = task_dir / issue_file if issue_file else None
 
     if config_path.exists():
         metadata["task_yml_sha256"] = file_sha256(config_path)
-    if issue_path.exists():
+    if issue_path is not None and issue_path.exists():
         metadata["issue_file_sha256"] = file_sha256(issue_path)
 
     return metadata
