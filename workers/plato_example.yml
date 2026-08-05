@@ -13,15 +13,18 @@ resource_policy:
   mode: scheduler_preemptible
   priority_mechanism_verified: false
   verification_reference: pending_confirmation_from_resource_owner
+  release_managed_externally: true
   pause_file: PAUSE
   command_timeout_seconds: 30
 
-  # Set only after the real queue/QoS or operating procedure is confirmed.
-  # The worker intentionally refuses to start while verification is false.
-  # For a manually shared machine, change mode to external_yield_signal and
-  # provide an availability_command that exits non-zero when another user needs it.
-  # release_command must stop the model server or release the GPU allocation when
-  # that lifecycle is not already controlled by the external scheduler.
+  # Set verification to true only after the real queue/QoS or operating
+  # procedure has been confirmed in writing. The worker intentionally refuses
+  # to start while verification is false.
+  #
+  # For a manually shared machine, change mode to external_yield_signal,
+  # set release_managed_externally to false, and provide both commands below.
+  # availability_command must exit non-zero when another user needs the GPU.
+  # release_command must stop the model server and release the allocation.
   # availability_command: /path/to/check_gpu_available_for_project.sh
   # release_command: /path/to/release_model_server_and_gpu.sh
 
