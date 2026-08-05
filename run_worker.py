@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 import yaml
 
 from agents.simple_agent import SimpleAgent
+from harness.contextbench_trajectory import build_contextbench_trajectory
 from harness.experiment_jobs import (
     atomic_write_json,
     load_jobs,
@@ -64,22 +65,33 @@ def execute_job(
     results_root: Path,
     worker_id: str,
     resource_policy: Optional[ResourcePolicy] = None,
+    runtime_overrides: Optional[Dict[str, Any]] = None,
 ) -> dict:
     if resource_policy is not None:
         resource_policy.checkpoint("before_job_setup")
 
     run_id = job["run_id"]
     task = TaskLoader().load(job["task_id"])
+    runtime_model_spec = dict(job["model"])
+    runtime_model_spec.update(dict(runtime_overrides or {}))
     model = create_model(
-        job["model"],
+        runtime_model_spec,
         options=job["generation_options"],
     )
     model_metadata = model.runtime_metadata()
-    scaffold = load_scaffold(job["scaffold"])
+    scaffold = load_scaffold(
+        job["scaffold"],
+        model=model,
+        task=task,
+        options=job.get("scaffold_options") or {},
+    )
 
     workspace_name = safe_name(run_id)
     workspace_path = prepare_workspace(task, workspace_name)
-    tools = FileTools(workspace_path)
+    tools = FileTools(
+        workspace_path,
+        test_timeout=int(task.get("test_timeout", 300)),
+    )
 
     log_path = results_root / "logs" / (run_id + ".jsonl")
     logger = JsonlLogger(str(log_path))
@@ -94,11 +106,22 @@ def execute_job(
         expected_files=task.get("expected_files", []),
         run_seed=int(job["run_seed"]),
         resource_policy=resource_policy,
+        test_command=task.get("test_command", "pytest"),
+        run_final_tests=task.get("run_final_tests", True),
     )
     result = agent.run(task["issue"])
+    model_patch = tools.git_diff()
+
+    contextbench_path = None
+    if task.get("source") == "contextbench":
+        trajectory = build_contextbench_trajectory(task, result, model_patch)
+        contextbench_path = (
+            results_root / "contextbench" / (run_id + ".context.json")
+        )
+        atomic_write_json(contextbench_path, trajectory)
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "completed",
         "run_id": run_id,
         "job": job,
@@ -110,7 +133,12 @@ def execute_job(
         ),
         "task": task_metadata(task),
         "model_runtime": model_metadata,
+        "runtime_overrides": dict(runtime_overrides or {}),
         "log_path": str(log_path),
+        "contextbench_trajectory_path": (
+            str(contextbench_path) if contextbench_path is not None else None
+        ),
+        "model_patch": model_patch,
         "result": result,
     }
 
