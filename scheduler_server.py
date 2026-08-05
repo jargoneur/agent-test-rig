@@ -7,11 +7,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 from urllib.parse import urlparse
 
-from harness.scheduler_store import SchedulerStore
+from harness.distributed_scheduler_store import DistributedSchedulerStore
 
 
 class SchedulerHandler(BaseHTTPRequestHandler):
-    server_version = "AgentRigScheduler/1.0"
+    server_version = "AgentRigScheduler/1.1"
 
     def _json_response(self, status: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -42,10 +42,14 @@ class SchedulerHandler(BaseHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         if path == "/health":
-            self._json_response(200, {"status": "ok"})
+            pause = self.server.store.pause_state()
+            self._json_response(200, {"status": "ok", "control": pause})
             return
         if path == "/status":
             self._json_response(200, self.server.store.status())
+            return
+        if path == "/control":
+            self._json_response(200, self.server.store.pause_state())
             return
         self._json_response(404, {"error": "not_found"})
 
@@ -62,15 +66,21 @@ class SchedulerHandler(BaseHTTPRequestHandler):
                     payload.get("capabilities") or {},
                     payload.get("active_model_id"),
                 )
-                result = {"status": "registered"}
+                result = {
+                    "status": "registered",
+                    "control": self.server.store.pause_state(),
+                }
             elif path == "/claim":
-                claim = self.server.store.claim_block(
-                    payload["worker_id"],
-                    payload.get("capabilities") or {},
-                    int(payload.get("lease_seconds", 3600)),
-                    payload.get("active_model_id"),
-                )
-                result = {"claim": claim}
+                control = self.server.store.pause_state()
+                claim = None
+                if not control.get("paused"):
+                    claim = self.server.store.claim_block(
+                        payload["worker_id"],
+                        payload.get("capabilities") or {},
+                        int(payload.get("lease_seconds", 3600)),
+                        payload.get("active_model_id"),
+                    )
+                result = {"claim": claim, "control": control}
             elif path == "/heartbeat":
                 valid = self.server.store.heartbeat(
                     payload["worker_id"],
@@ -79,7 +89,10 @@ class SchedulerHandler(BaseHTTPRequestHandler):
                     int(payload.get("lease_seconds", 3600)),
                     payload.get("active_model_id"),
                 )
-                result = {"valid": valid}
+                result = {
+                    "valid": valid,
+                    "control": self.server.store.pause_state(),
+                }
             elif path == "/complete":
                 self.server.store.complete_block(
                     payload["worker_id"],
@@ -97,6 +110,12 @@ class SchedulerHandler(BaseHTTPRequestHandler):
                     bool(payload.get("retry", True)),
                 )
                 result = {"status": "released"}
+            elif path == "/pause":
+                result = self.server.store.set_paused(
+                    True, str(payload.get("reason") or "operator pause")
+                )
+            elif path == "/resume":
+                result = self.server.store.set_paused(False, None)
             else:
                 self._json_response(404, {"error": "not_found"})
                 return
@@ -120,7 +139,7 @@ def main() -> None:
     parser.add_argument("--export-results")
     args = parser.parse_args()
 
-    store = SchedulerStore(args.database)
+    store = DistributedSchedulerStore(args.database)
     for manifest in args.manifest or []:
         print("Imported:", manifest, store.import_manifest(manifest))
     if args.export_results:
