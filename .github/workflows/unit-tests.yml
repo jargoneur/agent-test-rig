@@ -23,7 +23,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
         run: python -m pip install pytest requests PyYAML
-      - name: Run scheduler and profile unit tests
+      - name: Compile Python sources
+        run: >-
+          python -m compileall -q
+          agents harness scaffolds scripts
+          plan_experiment.py run_worker.py run_scheduled_worker.py
+          scheduler_server.py merge_results.py
+      - name: Run scheduler and runtime unit tests
         run: >-
           python -m pytest
           test_experiment_jobs.py
@@ -32,3 +38,4 @@ jobs:
           test_model_profiles.py
           test_resource_policy.py
           test_worker_configs.py
+          test_contextbench_runtime.py
