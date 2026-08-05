@@ -47,11 +47,10 @@ uv pip install --python .venv-contextbench/bin/python -r requirements/contextben
 
 bash scripts/fetch_upstreams.sh
 
-# Install frozen Aider and SWE-agent as normal packages. Their source trees under
-# .upstreams remain immutable and are imported directly by the adapters.
-uv pip install --python .venv/bin/python \
-    .upstreams/aider \
-    .upstreams/swe-agent
+# Install the dependency lock shipped by the frozen Aider checkout. The Aider
+# and SWE-agent source trees themselves remain untouched and are imported from
+# their verified commits through harness.upstreams.
+uv pip install --python .venv/bin/python -r .upstreams/aider/requirements.txt
 
 if [[ "$SKIP_LLAMA_BUILD" -eq 0 ]]; then
     CUDA_FLAG=OFF
