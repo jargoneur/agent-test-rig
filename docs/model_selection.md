@@ -16,6 +16,12 @@ The model plan is the recommendation from Prof. Alexander Eck:
 
 The previous Qwen2.5-Coder ladder plus four unrelated coding anchors was not part of this plan and has been withdrawn.
 
+## Minimum, not ceiling
+
+The ten-model programme is the **minimum successful research result** for this project. A pilot, a partial family, or a reduced model ladder is a technical validation stage and does not replace the minimum.
+
+The project may be expanded during execution when time and compute remain available. Expansion is append-only: additional models, tasks, repetitions, scaffold variants, or diagnostics receive a new wave and protocol amendment. They may not narrow, replace, or endanger completion of the ten-model core. The binding scope and expansion policy are recorded in `docs/research_scope_and_resource_policy.md` and `experiments/research_scope.yml`.
+
 ## Confirmed Qwen3.5 ladder
 
 The current official post-trained Qwen3.5 checkpoints matching the six-size description are:
@@ -55,6 +61,10 @@ The scientific deployment condition is provisionally:
 
 The earlier Q4_K_M/llama.cpp assumption is no longer treated as the primary plan because it conflicts with the supervisor's explicit 8-bit recommendation. Backend and exact quantization format remain pending hardware and model-support validation.
 
+## Shared-resource constraint
+
+All shared compute is opportunistic. Other users have priority over this project. Production workers on shared machines are blocked until the external priority or preemption mechanism has been verified and documented. A pause or yield request releases the current scheduler lease at the next safe checkpoint, keeps completed runs, and returns the incomplete block to the queue.
+
 ## Inference settings
 
 For each final checkpoint, official recommended sampling, thinking mode, chat template and tool-use configuration will be frozen. The same resolved profile is used across every scaffold, task, repeat and worker for that model.
@@ -68,4 +78,5 @@ No benchmark manifest may be generated until:
 3. recommended inference settings are extracted from official sources;
 4. an 8-bit artifact and 16-bit KV-cache configuration are validated;
 5. measured peak VRAM, including prefill, remains below 32 GB with a safety margin;
-6. artifact, tokenizer, template and profile hashes are recorded.
+6. artifact, tokenizer, template and profile hashes are recorded;
+7. shared-resource priority is verified before any shared production worker is enabled.
