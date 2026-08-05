@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import contextlib
+import json
+import math
+import time
+from typing import Any, Dict, Iterable, List, Optional
+
+from scaffolds.base import BaseScaffold
+
+
+class UpstreamScaffold(BaseScaffold):
+    """Utilities shared by thin adapters around frozen upstream algorithms."""
+
+    def _record_auxiliary_call(
+        self,
+        purpose: str,
+        prompt: str,
+        response: str,
+        started_at: float,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        metadata = dict(getattr(self.model, "last_generation_metadata", {}) or {})
+        self.auxiliary_calls.append(
+            {
+                "purpose": purpose,
+                "prompt_characters": len(prompt),
+                "response_characters": len(response or ""),
+                "elapsed_seconds": max(0.0, time.time() - started_at),
+                "options": dict(options or {}),
+                "generation_metadata": metadata,
+            }
+        )
+
+    @contextlib.contextmanager
+    def _temporary_model_options(self, overrides: Optional[Dict[str, Any]] = None):
+        if self.model is None:
+            raise RuntimeError("Scaffold requires a bound model")
+        previous = dict(getattr(self.model, "options", {}) or {})
+        if overrides:
+            merged = dict(previous)
+            merged.update(overrides)
+            self.model.options = merged
+        try:
+            yield
+        finally:
+            self.model.options = previous
+
+    def auxiliary_generate(
+        self,
+        prompt: str,
+        purpose: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        started = time.time()
+        with self._temporary_model_options(options):
+            response = self.model.generate(prompt)
+        self._record_auxiliary_call(
+            purpose,
+            prompt,
+            response,
+            started,
+            options=options,
+        )
+        return response
+
+    def token_count(self, value: Any) -> int:
+        if self.model is not None and hasattr(self.model, "token_count"):
+            return int(self.model.token_count(value))
+        if isinstance(value, list):
+            text = json.dumps(value, ensure_ascii=False)
+        else:
+            text = str(value)
+        return max(1, int(math.ceil(len(text) / 4.0)))
+
+    @staticmethod
+    def history_as_messages(history: Iterable[Dict[str, Any]]) -> List[Dict[str, str]]:
+        messages: List[Dict[str, str]] = []
+        for item in history:
+            response = item.get("response")
+            if response:
+                messages.append({"role": "assistant", "content": str(response)})
+            else:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            item.get("action") or {},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    }
+                )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        item.get("observation") or {},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                }
+            )
+        return messages
+
+
+class AiderModelShim:
+    """Small interface expected by Aider RepoMap and ChatSummary."""
+
+    def __init__(self, scaffold: UpstreamScaffold, name: str = "evaluated-model"):
+        self.scaffold = scaffold
+        self.name = name
+        max_input = int(scaffold.options.get("max_input_tokens", 32768))
+        self.info = {"max_input_tokens": max_input}
+
+    def token_count(self, value: Any) -> int:
+        return self.scaffold.token_count(value)
+
+    def simple_send_with_retries(self, messages) -> str:
+        prompt = json.dumps(messages, indent=2, ensure_ascii=False)
+        return self.scaffold.auxiliary_generate(
+            prompt,
+            purpose="aider_chat_summary",
+        )
+
+
+class AiderIOShim:
+    def __init__(self):
+        self.messages: List[str] = []
+
+    def _capture(self, message: Any) -> None:
+        self.messages.append(str(message))
+
+    tool_output = _capture
+    tool_warning = _capture
+    tool_error = _capture
