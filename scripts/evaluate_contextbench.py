@@ -6,7 +6,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -63,7 +62,18 @@ def main() -> None:
         "--cache-dir",
         default=".cache/contextbench_evaluator",
     )
+    parser.add_argument(
+        "--evaluator-python",
+        default=str(ROOT / ".venv-contextbench" / "bin" / "python"),
+    )
     args = parser.parse_args()
+
+    evaluator_python = Path(args.evaluator_python).expanduser().resolve()
+    if not evaluator_python.is_file():
+        raise FileNotFoundError(
+            "ContextBench evaluator Python is missing: %s. Run scripts/bootstrap.sh"
+            % evaluator_python
+        )
 
     groups = defaultdict(dict)
     for root_value in args.roots:
@@ -130,7 +140,7 @@ def main() -> None:
                 )
 
         command = [
-            sys.executable,
+            str(evaluator_python),
             "-m",
             "contextbench.evaluate",
             "--gold",
