@@ -69,8 +69,27 @@ bash scripts/fetch_upstreams.sh
 # Install dependency locks shipped by the frozen upstreams. Their source trees
 # remain untouched and are imported from the verified commits.
 uv pip install --python .venv/bin/python -r .upstreams/aider/requirements.txt
+
+# llama.cpp's converter lock combines PyPI with PyTorch wheel indexes. uv's
+# secure first-index policy can otherwise select the PyTorch index for packages
+# such as transformers and incorrectly declare the pinned set unsatisfiable.
+# Install the normal converter dependencies from PyPI, then install the exact
+# upstream-pinned torch requirement from the official CPU wheel index.
+LLAMA_REQUIREMENTS="$ROOT/.upstreams/llama.cpp/requirements"
 uv pip install --python .venv/bin/python \
-    -r .upstreams/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+    -r "$LLAMA_REQUIREMENTS/requirements-convert_legacy_llama.txt"
+TORCH_REQUIREMENT="$(
+    sed -n 's/^\(torch==[^;[:space:]]*\);.*/\1/p' \
+        "$LLAMA_REQUIREMENTS/requirements-convert_hf_to_gguf.txt" \
+        | head -n 1
+)"
+if [[ -z "$TORCH_REQUIREMENT" ]]; then
+    echo "Could not resolve the pinned torch requirement from llama.cpp." >&2
+    exit 1
+fi
+uv pip install --python .venv/bin/python \
+    --index-url https://download.pytorch.org/whl/cpu \
+    "$TORCH_REQUIREMENT"
 .venv/bin/python scripts/check_llama_converter.py
 
 if [[ "$SKIP_LLAMA_BUILD" -eq 0 ]]; then
