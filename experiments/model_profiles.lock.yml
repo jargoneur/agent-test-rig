@@ -1,17 +1,18 @@
-schema_version: 2
-status: selected_pending_artifact_hashes
+schema_version: 3
+status: family_plan_restored_pending_gemma4_clarification
 frozen_at: "2026-08-05"
 policy_document: docs/model_inference_policy.md
 selection_document: docs/model_selection.md
 
 selection_rule:
-  primary_profile: exact_checkpoint_bundled_generation_config
+  source: supervisor_recommendation
+  target_model_count: 10
+  families:
+    qwen3_5: 6
+    gemma4: 4
   official_sources_only: true
   unofficial_presets_allowed: false
   local_tuning_allowed: false
-  design:
-    within_family_size_ladder: qwen2_5_coder_instruct
-    external_coding_anchors: 4
 
 paired_execution:
   same_profile_across_scaffolds: true
@@ -19,257 +20,127 @@ paired_execution:
   same_profile_across_workers: true
   reject_runtime_mismatch: true
 
+hardware_envelope:
+  gpu_vram_gib: 32
+  weight_quantization_target: int8
+  kv_cache_precision_target: fp16
+  cpu_offload_allowed: false
+  include_prefill_peak_in_validation: true
+  require_runtime_safety_margin: true
+
 common_protocol_limits:
-  input_context_tokens: 16384
+  input_context_tokens: pending_memory_profile
   max_new_tokens_per_action: 2048
-  note: >-
-    These are experiment-wide resource limits. They override larger native or
-    recommended maximum lengths but do not alter model-specific sampling settings.
 
 runtime:
-  backend: llama.cpp_openai_compatible
-  backend_repository: ggml-org/llama.cpp
-  backend_revision: 6ea215d171fd31df943bf1ac8227129f2b963160
-  target_quantization: Q4_K_M
-  conversion_status: pending_per_model_validation
-  artifact_rule: one_identical_hashed_gguf_per_model_on_every_worker
+  backend: pending_validation
+  backend_revision: pending_validation
+  artifact_rule: one_identical_hashed_artifact_per_model_on_every_worker
 
 models:
-  qwen2_5_coder_0_5b_instruct:
-    model_id: Qwen/Qwen2.5-Coder-0.5B-Instruct
-    model_revision: ea3f2471cf1b1f0db85067f1ef93848e38e88c25
-    family: qwen2.5-coder
+  qwen3_5_0_8b:
+    model_id: Qwen/Qwen3.5-0.8B
+    model_revision: pending_resolution
+    family: qwen3.5
     architecture: dense
-    parameters_billion: 0.49
-    license: apache-2.0
-    native_context_tokens: 32768
-    recommendation_source: generation_config.json
-    recommendation_source_revision: ea99d3edbfc6669b8b24cbaa6a98ec0e857f0155
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.1
-    stop_token_ids: [151645, 151643]
+    parameters_billion: 0.8
+    resolved_generation_options: pending_official_extraction
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
+    quantized_artifact_sha256: pending_quantization
     profile_sha256: pending_resolution
 
-  qwen2_5_coder_1_5b_instruct:
-    model_id: Qwen/Qwen2.5-Coder-1.5B-Instruct
-    model_revision: 2e1fd397ee46e1388853d2af2c993145b0f1098a
-    family: qwen2.5-coder
+  qwen3_5_2b:
+    model_id: Qwen/Qwen3.5-2B
+    model_revision: pending_resolution
+    family: qwen3.5
     architecture: dense
-    parameters_billion: 1.54
-    license: apache-2.0
-    native_context_tokens: 32768
-    recommendation_source: generation_config.json
-    recommendation_source_revision: 50285f6
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.1
-    stop_token_ids: [151645, 151643]
+    parameters_billion: 2
+    resolved_generation_options: pending_official_extraction
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
+    quantized_artifact_sha256: pending_quantization
     profile_sha256: pending_resolution
 
-  qwen2_5_coder_3b_instruct:
-    model_id: Qwen/Qwen2.5-Coder-3B-Instruct
-    model_revision: 488639f1ff808d1d3d0ba301aef8c11461451ec5
-    family: qwen2.5-coder
+  qwen3_5_4b:
+    model_id: Qwen/Qwen3.5-4B
+    model_revision: pending_resolution
+    family: qwen3.5
     architecture: dense
-    parameters_billion: 3.09
-    license: qwen-research
-    native_context_tokens: 32768
-    recommendation_source: generation_config.json
-    recommendation_source_revision: 89fe544
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.05
-    stop_token_ids: [151645, 151643]
+    parameters_billion: 4
+    resolved_generation_options: pending_official_extraction
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
+    quantized_artifact_sha256: pending_quantization
     profile_sha256: pending_resolution
 
-  qwen2_5_coder_7b_instruct:
-    model_id: Qwen/Qwen2.5-Coder-7B-Instruct
-    model_revision: c03e6d358207e414f1eca0bb1891e29f1db0e242
-    family: qwen2.5-coder
+  qwen3_5_9b:
+    model_id: Qwen/Qwen3.5-9B
+    model_revision: pending_resolution
+    family: qwen3.5
     architecture: dense
-    parameters_billion: 7.62
-    license: apache-2.0
-    native_context_tokens: 32768
-    recommendation_source: generation_config.json
-    recommendation_source_revision: 0eb6b1e
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.1
-    stop_token_ids: [151645, 151643]
+    parameters_billion: 9
+    resolved_generation_options: pending_official_extraction
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
+    quantized_artifact_sha256: pending_quantization
     profile_sha256: pending_resolution
 
-  qwen2_5_coder_14b_instruct:
-    model_id: Qwen/Qwen2.5-Coder-14B-Instruct
-    model_revision: aedcc2d42b622764e023cf882b6652e646b95671
-    family: qwen2.5-coder
+  qwen3_5_27b:
+    model_id: Qwen/Qwen3.5-27B
+    model_revision: pending_resolution
+    family: qwen3.5
     architecture: dense
-    parameters_billion: 14.7
-    license: apache-2.0
-    native_context_tokens: 32768
-    recommendation_source: generation_config.json
-    recommendation_source_revision: aedcc2d42b622764e023cf882b6652e646b95671
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.05
-    stop_token_ids: [151645, 151643]
+    parameters_billion: 27
+    resolved_generation_options: pending_official_extraction
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
+    quantized_artifact_sha256: pending_quantization
     profile_sha256: pending_resolution
 
-  qwen2_5_coder_32b_instruct:
-    model_id: Qwen/Qwen2.5-Coder-32B-Instruct
-    model_revision: 8e235c6ec459d0f89e9f319508b600c508bec98e
-    family: qwen2.5-coder
-    architecture: dense
-    parameters_billion: 32.5
-    license: apache-2.0
-    native_context_tokens: 32768
-    recommendation_source: generation_config.json
-    recommendation_source_revision: 8e235c6ec459d0f89e9f319508b600c508bec98e
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.05
-    stop_token_ids: [151645, 151643]
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
-    profile_sha256: pending_resolution
-
-  starcoder2_15b_instruct:
-    model_id: bigcode/starcoder2-15b-instruct-v0.1
-    model_revision: ffb8dd9776ba9a66d655ecd962e882f3013e9f7c
-    family: starcoder2
-    architecture: dense
-    parameters_billion: 15.0
-    license: bigcode-openrail-m
-    native_context_tokens: 16384
-    recommendation_source: generation_config.json_plus_transformers_defaults
-    recommendation_source_revision: ffb8dd9776ba9a66d655ecd962e882f3013e9f7c
-    resolved_generation_options:
-      do_sample: false
-      resolution_note: >-
-        The official generation_config defines token IDs but no sampling fields;
-        Transformers GenerationConfig therefore resolves to greedy decoding.
-    stop_token_ids: [0]
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
-    profile_sha256: pending_resolution
-
-  deepseek_coder_v2_lite_instruct:
-    model_id: deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
-    model_revision: e434a23f91ba5b4923cf6c9d9a238eb4a08e3a11
-    family: deepseek-coder-v2
+  qwen3_5_35b_a3b:
+    model_id: Qwen/Qwen3.5-35B-A3B
+    model_revision: pending_resolution
+    family: qwen3.5
     architecture: mixture_of_experts
-    parameters_billion_total: 16.0
-    parameters_billion_active: 2.4
-    license: deepseek-license
-    native_context_tokens: 128000
-    recommendation_source: generation_config.json
-    recommendation_source_revision: e434a23f91ba5b4923cf6c9d9a238eb4a08e3a11
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.3
-      top_p: 0.95
-    stop_token_ids: [100001]
+    parameters_billion_total: 35
+    parameters_billion_active: 3
+    resolved_generation_options: pending_official_extraction
     model_artifact_sha256: pending_download
     tokenizer_sha256: pending_download
     chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
+    quantized_artifact_sha256: pending_quantization
     profile_sha256: pending_resolution
 
-  devstral_small_2_24b_instruct_2512:
-    model_id: mistralai/Devstral-Small-2-24B-Instruct-2512
-    model_revision: 1da725e0a5f7c2e6444035331fa04ff945e1b37a
-    family: devstral
-    architecture: dense
-    parameters_billion: 24.0
-    source_precision: fp8
-    license: apache-2.0
-    native_context_tokens: 262144
-    recommendation_source: generation_config.json
-    recommendation_source_revision: b6e0feaedf9a8b81471978abea009b5b9473e6ee
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.15
-    stop_token_ids: [2]
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
-    profile_sha256: pending_resolution
-
-  qwen3_coder_30b_a3b_instruct:
-    model_id: Qwen/Qwen3-Coder-30B-A3B-Instruct
-    model_revision: b2cff646eb4bb1d68355c01b18ae02e7cf42d120
-    family: qwen3-coder
-    architecture: mixture_of_experts
-    parameters_billion_total: 30.5
-    parameters_billion_active: 3.3
-    license: apache-2.0
-    native_context_tokens: 262144
-    reasoning_mode: non_thinking_only
-    recommendation_source: generation_config.json
-    recommendation_source_revision: 703eb35
-    resolved_generation_options:
-      do_sample: true
-      temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      repetition_penalty: 1.05
-    stop_token_ids: [151645, 151643]
-    model_artifact_sha256: pending_download
-    tokenizer_sha256: pending_download
-    chat_template_sha256: pending_download
-    quantized_artifact_sha256: pending_conversion
-    profile_sha256: pending_resolution
+unresolved_family_slots:
+  gemma4:
+    required_count: 4
+    supervisor_description: "four sizes, three MoE"
+    official_current_candidates:
+      - google/gemma-4-E2B-it
+      - google/gemma-4-E4B-it
+      - google/gemma-4-12B-it
+      - google/gemma-4-26B-A4B-it
+      - google/gemma-4-31B-it
+    official_current_moe_candidates:
+      - google/gemma-4-26B-A4B-it
+    resolution_required: true
 
 validation_gate:
   benchmark_runs_allowed: false
   unblock_when:
+    - exact_four_gemma4_checkpoints_are_confirmed
     - every_source_revision_resolves
+    - official_generation_profiles_are_recorded
     - every_model_and_tokenizer_hash_is_recorded
     - every_chat_template_hash_is_recorded
-    - every_gguf_conversion_is_validated
+    - int8_artifacts_are_validated
+    - fp16_kv_cache_is_validated
+    - measured_peak_vram_including_prefill_fits_32_gib_with_margin
     - every_quantized_artifact_hash_is_recorded
     - every_profile_hash_is_recorded
-    - llama_cpp_support_is_smoke_tested_for_all_models
