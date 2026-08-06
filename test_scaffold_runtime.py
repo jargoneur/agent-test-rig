@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+from scaffolds.agentless_localization import Scaffold as AgentlessScaffold
 from scaffolds.upstream_base import AiderIOShim, UpstreamScaffold
 
 
@@ -74,3 +77,32 @@ def test_aider_io_shim_reads_text_and_handles_missing_files(tmp_path):
 
     assert io.read_text(tmp_path / "missing.py") is None
     assert io.messages == [f"{tmp_path / 'missing.py'}: file not found error"]
+
+
+def test_agentless_patches_model_factory_at_actual_import_source_only():
+    original_factory = object()
+    scaffold = AgentlessScaffold.__new__(AgentlessScaffold)
+    scaffold.model_module = SimpleNamespace(make_model=original_factory)
+    scaffold.fl_module = SimpleNamespace()
+    scaffold.options = {}
+    scaffold.model = DummyModel()
+    scaffold.auxiliary_calls = []
+
+    with scaffold._patched_model_factory():
+        assert callable(scaffold.model_module.make_model)
+        assert not hasattr(scaffold.fl_module, "make_model")
+        decoder = scaffold.model_module.make_model(
+            model="evaluated-model",
+            backend="openai",
+            logger=None,
+            batch_size=1,
+            max_tokens=321,
+            temperature=0.25,
+        )
+        assert decoder.scaffold is scaffold
+        assert decoder.name == "evaluated-model"
+        assert decoder.max_new_tokens == 321
+        assert decoder.temperature == 0.25
+
+    assert scaffold.model_module.make_model is original_factory
+    assert not hasattr(scaffold.fl_module, "make_model")
