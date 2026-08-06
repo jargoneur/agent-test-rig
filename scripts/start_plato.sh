@@ -180,6 +180,7 @@ for index in $(seq 0 $((WORKER_COUNT - 1))); do
         LLAMA_PORT="$port" \
         RESOURCE_MODE="manual_operator" \
         SHARED_RESOURCE="true" \
+        OTHER_USERS_PRIORITY="true" \
         OPERATOR_ACKNOWLEDGEMENT="user_started_manually_under_prof_eck_permission" \
         VERIFICATION_REFERENCE="prof_eck_permission_compute_until_contact_2026-08-05" \
         MODEL_IDS="$ACTIVE_MODEL_ID" \
