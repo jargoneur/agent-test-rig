@@ -9,9 +9,24 @@ logs/*.jsonl
 logs/*.manifest.json
 results/batch_*.csv
 results/batch_*.manifest.json
+results/local_*.csv
+results/local_*.csv.sha256
+distributed_results/
+jobs/*.jsonl
+jobs/*.manifest.json
+merged_results*.csv
+merged_results*.csv.sha256
+scheduler/*.sqlite3
+scheduler/*.sqlite3-*
+PAUSE
 
 # Generated benchmark workspaces
 .workspaces/
+
+# Locked external source checkouts and model artifacts
+.upstreams/
+model_artifacts/
+model_metadata/
 
 # Local/editor files
 .vscode/

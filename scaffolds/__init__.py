@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from importlib import import_module
 
 
-def load_scaffold(name: str):
+def load_scaffold(name: str, model=None, task=None, options=None):
     if not name.replace("_", "").isalnum():
         raise ValueError(f"Invalid scaffold name: {name}")
 
@@ -12,4 +14,7 @@ def load_scaffold(name: str):
             f"Scaffold module 'scaffolds.{name}' must define a class or alias called Scaffold"
         )
 
-    return module.Scaffold()
+    scaffold = module.Scaffold(model=model, task=task, options=options)
+    if hasattr(scaffold, "bind"):
+        scaffold.bind(model=model, task=task, options=options)
+    return scaffold

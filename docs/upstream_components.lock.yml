@@ -1,0 +1,115 @@
+schema_version: 2
+frozen_at: "2026-08-05"
+policy:
+  benchmark_and_scaffold_algorithms: upstream_only
+  model_conversion_and_runtime: pinned_upstream_only
+  local_code_allowed:
+    - thin_adapters
+    - data_format_conversion
+    - scheduler_integration
+    - logging_and_provenance
+    - acquisition_and_hash_verification
+    - compatibility_patches_kept_as_explicit_patch_files
+  local_code_forbidden:
+    - reimplementation_of_contextbench_metrics
+    - reimplementation_of_selected_scaffold_algorithms
+    - custom_model_quantization_algorithms
+    - silent_modification_of_upstream_prompts_or_ranking_logic
+
+components:
+  contextbench:
+    repository: EuniAI/ContextBench
+    clone_url: https://github.com/EuniAI/ContextBench.git
+    commit: 1436c28a8eb95496da4ea69ad458b9f8a8eb7d61
+    license: Apache-2.0
+    role:
+      - dataset
+      - task_runner
+      - trajectory_processing
+      - gold_context_evaluation
+    entrypoints:
+      - contextbench.run
+      - contextbench.process_trajectories
+      - contextbench.evaluate
+    adaptation: invoke_upstream_cli_or_python_api
+
+  sweagent_last5:
+    repository: SWE-agent/SWE-agent
+    clone_url: https://github.com/SWE-agent/SWE-agent.git
+    commit: 3ea751c087f32b16e039a2233dd6eefecef325d5
+    license: MIT
+    role: recency_control
+    implementation:
+      path: sweagent/agent/history_processors.py
+      symbol: LastNObservations
+      parameters:
+        n: 5
+        polling: 1
+    adaptation: convert_harness_events_to_and_from_sweagent_history_schema
+
+  aider_repomap:
+    repository: Aider-AI/aider
+    clone_url: https://github.com/Aider-AI/aider.git
+    commit: 5dc9490bb35f9729ef2c95d00a19ccd30c26339c
+    license: Apache-2.0
+    role: global_repository_map
+    implementation:
+      path: aider/repomap.py
+      symbol: RepoMap
+    adaptation: instantiate_upstream_class_and_inject_its_unmodified_map_output
+
+  agentless_localization:
+    repository: OpenAutoCoder/Agentless
+    clone_url: https://github.com/OpenAutoCoder/Agentless.git
+    commit: 5ce5888b9f149beaace393957a55ea8ee46c9f71
+    license: MIT
+    role: hierarchical_localization
+    implementation:
+      paths:
+        - agentless/fl/FL.py
+        - agentless/fl/localize.py
+        - agentless/fl/retrieve.py
+        - agentless/fl/Index.py
+    adaptation: invoke_upstream_localization_stages_and_translate_outputs_only
+
+  aider_chat_summary:
+    repository: Aider-AI/aider
+    clone_url: https://github.com/Aider-AI/aider.git
+    commit: 5dc9490bb35f9729ef2c95d00a19ccd30c26339c
+    license: Apache-2.0
+    role: threshold_triggered_history_compaction
+    implementation:
+      path: aider/history.py
+      symbol: ChatSummary
+    adaptation: provide_model_wrapper_and_convert_message_schema_without_changing_summary_logic
+
+  llama_cpp_runtime:
+    repository: ggml-org/llama.cpp
+    clone_url: https://github.com/ggml-org/llama.cpp.git
+    commit: 6ea215d171fd31df943bf1ac8227129f2b963160
+    license: MIT
+    role:
+      - huggingface_to_gguf_conversion
+      - Q4_K_M_quantization
+      - openai_compatible_inference_server
+    implementation:
+      - convert_hf_to_gguf.py
+      - llama-quantize
+      - llama-server
+    adaptation: command_line_configuration_only
+
+reproducibility:
+  acquisition: locked_source_checkout_under_dot_upstreams
+  acquisition_script: scripts/fetch_upstreams.sh
+  require_clean_upstream_tree: true
+  record_at_run_time:
+    - repository
+    - commit
+    - license
+    - local_patch_hash
+    - dependency_lock_hash
+    - adapter_hash
+    - model_artifact_hash
+    - tokenizer_hash
+    - chat_template_hash
+    - runtime_binary_hash

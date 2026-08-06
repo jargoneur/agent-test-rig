@@ -1,0 +1,17 @@
+worker_id: local-wsl-qwen3b
+scheduler_url: http://127.0.0.1:8787
+results_root: distributed_results/local-wsl-qwen3b
+lease_seconds: 7200
+heartbeat_seconds: 60
+idle_seconds: 5
+stop_when_idle: true
+retry_failed_blocks: true
+
+resource_policy:
+  shared_resource: false
+  mode: local_exclusive
+  pause_file: PAUSE
+
+capabilities:
+  model_ids:
+    - qwen2.5-coder-3b-q4km

@@ -1,0 +1,147 @@
+schema_version: 4
+status: family_membership_fixed_profiles_pending
+frozen_at: "2026-08-06"
+policy_document: docs/model_inference_policy.md
+selection_document: docs/model_selection.md
+
+selection_rule:
+  source: user_protocol_decision_two_complete_families
+  target_model_count: 11
+  families:
+    qwen3_5: 6
+    gemma4: 5
+  official_sources_only: true
+  unofficial_presets_allowed: false
+  local_tuning_allowed: false
+
+paired_execution:
+  same_profile_across_scaffolds: true
+  same_seed_across_scaffolds: true
+  same_profile_across_workers: true
+  reject_runtime_mismatch: true
+
+hardware_envelope:
+  gpu_vram_gib: 32
+  weight_quantization_target: int8
+  kv_cache_precision_target: fp16
+  cpu_offload_allowed: false
+  include_prefill_peak_in_validation: true
+  require_runtime_safety_margin: true
+
+common_protocol_limits:
+  input_context_tokens: null
+  max_new_tokens_per_action: 2048
+
+runtime:
+  backend: llama_cpp_pending_checkpoint_validation
+  backend_revision: pending_validation
+  target_quantization: int8
+  artifact_rule: one_identical_hashed_artifact_per_model_on_every_worker
+  advertise_only_locally_verified_artifacts: true
+
+profile_defaults: &pending_profile
+  model_revision: pending_resolution
+  generation_profile_status: pending_official_extraction
+  resolved_generation_options: {}
+  model_artifact_sha256: pending_download
+  tokenizer_sha256: pending_download
+  chat_template_sha256: pending_download
+  quantized_artifact_sha256: pending_quantization
+  profile_sha256: pending_resolution
+  measured_peak_vram_gib: pending_measurement
+  deployment_status: pending_validation
+
+models:
+  qwen3_5_0_8b:
+    <<: *pending_profile
+    model_id: Qwen/Qwen3.5-0.8B
+    family: qwen3.5
+    architecture: dense
+    parameters_billion: 0.8
+
+  qwen3_5_2b:
+    <<: *pending_profile
+    model_id: Qwen/Qwen3.5-2B
+    family: qwen3.5
+    architecture: dense
+    parameters_billion: 2
+
+  qwen3_5_4b:
+    <<: *pending_profile
+    model_id: Qwen/Qwen3.5-4B
+    family: qwen3.5
+    architecture: dense
+    parameters_billion: 4
+
+  qwen3_5_9b:
+    <<: *pending_profile
+    model_id: Qwen/Qwen3.5-9B
+    family: qwen3.5
+    architecture: dense
+    parameters_billion: 9
+
+  qwen3_5_27b:
+    <<: *pending_profile
+    model_id: Qwen/Qwen3.5-27B
+    family: qwen3.5
+    architecture: dense
+    parameters_billion: 27
+
+  qwen3_5_35b_a3b:
+    <<: *pending_profile
+    model_id: Qwen/Qwen3.5-35B-A3B
+    family: qwen3.5
+    architecture: mixture_of_experts
+    parameters_billion_total: 35
+    parameters_billion_active: 3
+
+  gemma4_e2b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-E2B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: E2B
+
+  gemma4_e4b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-E4B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: E4B
+
+  gemma4_12b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-12B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: 12B
+
+  gemma4_26b_a4b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-26B-A4B-it
+    family: gemma4
+    architecture: mixture_of_experts
+    parameters_label: 26B-A4B
+
+  gemma4_31b_it:
+    <<: *pending_profile
+    model_id: google/gemma-4-31B-it
+    family: gemma4
+    architecture: pending_official_profile_extraction
+    parameters_label: 31B
+
+validation_gate:
+  benchmark_runs_allowed: false
+  validation_smokes_allowed: true
+  unblock_when:
+    - all_eleven_source_revisions_resolve
+    - official_generation_profiles_are_recorded
+    - every_model_and_tokenizer_hash_is_recorded
+    - every_chat_template_hash_is_recorded
+    - int8_artifacts_are_validated
+    - fp16_kv_cache_is_validated
+    - measured_peak_vram_including_prefill_is_recorded
+    - deployment_constraints_are_explicitly_resolved
+    - every_quantized_artifact_hash_is_recorded
+    - every_profile_hash_is_recorded
+    - distributed_current_head_smoke_passes

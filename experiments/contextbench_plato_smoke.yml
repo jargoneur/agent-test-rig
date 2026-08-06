@@ -1,0 +1,30 @@
+experiment_id: contextbench_distributed_smoke
+manifest: jobs/contextbench_distributed_smoke.jsonl
+
+task_source:
+  type: contextbench
+  cache: benchmarks/contextbench/tasks.jsonl
+  limit: 8
+
+models:
+  - id: qwen3_5_0_8b
+    name: qwen3_5_0_8b
+    backend: llama_cpp
+    quantization: Q8_0
+    resource_class: small
+    generation_options:
+      do_sample: false
+
+scaffolds:
+  - sweagent_last5
+  - aider_repomap
+  - agentless_localization
+  - aider_chat_summary
+
+repeats: 1
+max_steps: 3
+base_seed: 20260805
+wave_size: 25
+
+generation_options:
+  num_predict: 512

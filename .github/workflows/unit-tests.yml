@@ -1,0 +1,44 @@
+name: Unit tests
+
+on:
+  push:
+    branches:
+      - distributed-workers
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.8"
+          - "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: python -m pip install pytest requests PyYAML
+      - name: Compile production Python sources
+        run: >-
+          python -m compileall -q
+          agents harness scaffolds scripts
+          plan_experiment.py run_worker.py run_scheduled_worker.py
+          scheduler_server.py merge_results.py
+      - name: Run scheduler and runtime unit tests
+        run: >-
+          python -m pytest
+          test_experiment_jobs.py
+          test_scheduler_store.py
+          test_distributed_scheduler_store.py
+          test_plato_model_slot.py
+          test_model_adapter.py
+          test_model_profiles.py
+          test_resource_policy.py
+          test_worker_configs.py
+          test_contextbench_runtime.py
+          test_scaffold_runtime.py

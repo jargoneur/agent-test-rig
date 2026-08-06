@@ -1,0 +1,40 @@
+worker_id: plato-v100
+scheduler_url: http://127.0.0.1:8787
+results_root: distributed_results/plato-v100
+lease_seconds: 7200
+heartbeat_seconds: 60
+idle_seconds: 30
+stop_when_idle: false
+retry_failed_blocks: true
+
+resource_policy:
+  shared_resource: true
+  other_users_priority: true
+  mode: scheduler_preemptible
+  priority_mechanism_verified: false
+  verification_reference: pending_confirmation_from_resource_owner
+  release_managed_externally: true
+  pause_file: PAUSE
+  command_timeout_seconds: 30
+
+  # Set verification to true only after the real queue/QoS or operating
+  # procedure has been confirmed in writing. The worker intentionally refuses
+  # to start while verification is false.
+  #
+  # For a manually shared machine, change mode to external_yield_signal,
+  # set release_managed_externally to false, and provide both commands below.
+  # availability_command must exit non-zero when another user needs the GPU.
+  # release_command must stop the model server and release the allocation.
+  # availability_command: /path/to/check_gpu_available_for_project.sh
+  # release_command: /path/to/release_model_server_and_gpu.sh
+
+capabilities:
+  resource_classes:
+    - small
+    - medium
+    - large
+
+# Add model_ids only when this worker should be restricted to specific
+# checkpoints. Tasks and scaffolds are never assigned manually.
+# model_ids:
+#   - qwen35-27b-int8

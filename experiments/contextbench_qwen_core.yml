@@ -1,0 +1,63 @@
+# Operationally complete six-model queue. This is deliberately validation-only
+# until exact checkpoint revisions, hashes, chat/thinking modes, and official
+# per-checkpoint generation profiles are frozen in model_profiles.lock.yml.
+protocol_status: provisional_validation_only
+experiment_id: contextbench_qwen3_5_provisional_validation
+manifest: jobs/contextbench_qwen3_5_provisional_validation.jsonl
+
+task_source:
+  type: contextbench
+  cache: benchmarks/contextbench/tasks.jsonl
+  limit: 150
+
+models:
+  - id: qwen3_5_0_8b
+    name: qwen3_5_0_8b
+    backend: llama_cpp
+    quantization: Q8_0
+    resource_class: small
+    generation_options: {do_sample: false}
+  - id: qwen3_5_2b
+    name: qwen3_5_2b
+    backend: llama_cpp
+    quantization: Q8_0
+    resource_class: small
+    generation_options: {do_sample: false}
+  - id: qwen3_5_4b
+    name: qwen3_5_4b
+    backend: llama_cpp
+    quantization: Q8_0
+    resource_class: small
+    generation_options: {do_sample: false}
+  - id: qwen3_5_9b
+    name: qwen3_5_9b
+    backend: llama_cpp
+    quantization: Q8_0
+    resource_class: medium
+    generation_options: {do_sample: false}
+  - id: qwen3_5_27b
+    name: qwen3_5_27b
+    backend: llama_cpp
+    quantization: Q8_0
+    resource_class: large
+    generation_options: {do_sample: false}
+  - id: qwen3_5_35b_a3b
+    name: qwen3_5_35b_a3b
+    backend: llama_cpp
+    quantization: Q8_0
+    resource_class: large
+    generation_options: {do_sample: false}
+
+scaffolds:
+  - sweagent_last5
+  - aider_repomap
+  - agentless_localization
+  - aider_chat_summary
+
+repeats: 3
+max_steps: 10
+base_seed: 20260805
+wave_size: 25
+
+generation_options:
+  num_predict: 2048

@@ -1,0 +1,32 @@
+experiment_id: distributed_example
+manifest: jobs/distributed_example.jsonl
+
+tasks:
+  - file_discovery_status
+
+models:
+  - id: qwen2.5-coder-3b-q4km
+    name: qwen2.5-coder:3b
+    backend: ollama
+    quantization: Q4_K_M
+    resource_class: small
+    generation_options:
+      do_sample: true
+      temperature: 0.7
+      top_p: 0.8
+      top_k: 20
+      repetition_penalty: 1.05
+
+scaffolds:
+  - baseline
+  - aggressive
+  - test_first
+
+repeats: 3
+max_steps: 10
+base_seed: 12345
+wave_size: 25
+
+generation_options:
+  num_ctx: 16384
+  num_predict: 2048
