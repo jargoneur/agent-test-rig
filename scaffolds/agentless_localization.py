@@ -81,8 +81,10 @@ class Scaffold(UpstreamScaffold):
 
     @contextlib.contextmanager
     def _patched_model_factory(self):
+        # Agentless imports make_model locally inside each localization method:
+        # `from agentless.util.model import make_model`. Patch that source module
+        # only; agentless.fl.FL does not expose a make_model attribute.
         original_model_factory = self.model_module.make_model
-        original_fl_factory = self.fl_module.make_model
 
         def make_model(
             model,
@@ -102,12 +104,10 @@ class Scaffold(UpstreamScaffold):
             )
 
         self.model_module.make_model = make_model
-        self.fl_module.make_model = make_model
         try:
             yield
         finally:
             self.model_module.make_model = original_model_factory
-            self.fl_module.make_model = original_fl_factory
 
     @staticmethod
     @contextlib.contextmanager
