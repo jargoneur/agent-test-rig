@@ -173,8 +173,11 @@ class AiderModelShim:
 
 
 class AiderIOShim:
-    def __init__(self):
+    """Minimal non-interactive subset of Aider's InputOutput interface."""
+
+    def __init__(self, encoding: str = "utf-8"):
         self.messages: List[str] = []
+        self.encoding = encoding
 
     def _capture(self, message: Any, *args: Any, **kwargs: Any) -> None:
         self.messages.append(str(message))
@@ -182,3 +185,23 @@ class AiderIOShim:
     tool_output = _capture
     tool_warning = _capture
     tool_error = _capture
+
+    def read_text(self, filename: Any, silent: bool = False) -> Optional[str]:
+        """Match the text-reading contract used by the frozen Aider RepoMap."""
+        try:
+            with open(str(filename), "r", encoding=self.encoding) as handle:
+                return handle.read()
+        except FileNotFoundError:
+            if not silent:
+                self.tool_error("%s: file not found error" % filename)
+        except IsADirectoryError:
+            if not silent:
+                self.tool_error("%s: is a directory" % filename)
+        except OSError as error:
+            if not silent:
+                self.tool_error("%s: unable to read: %s" % (filename, error))
+        except UnicodeError as error:
+            if not silent:
+                self.tool_error("%s: %s" % (filename, error))
+                self.tool_error("Use --encoding to set the unicode encoding.")
+        return None
