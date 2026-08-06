@@ -1,4 +1,4 @@
-from scaffolds.upstream_base import UpstreamScaffold
+from scaffolds.upstream_base import AiderIOShim, UpstreamScaffold
 
 
 class DummyPolicy:
@@ -61,3 +61,16 @@ def test_auxiliary_calls_are_seeded_logged_and_checkpointed():
         "auxiliary:summary:2:before_model_call",
         "auxiliary:summary:2:after_model_call",
     ]
+
+
+def test_aider_io_shim_reads_text_and_handles_missing_files(tmp_path):
+    source = tmp_path / "module.py"
+    source.write_text("print('ok')\n", encoding="utf-8")
+
+    io = AiderIOShim()
+    assert io.read_text(source) == "print('ok')\n"
+    assert io.read_text(tmp_path / "missing.py", silent=True) is None
+    assert io.messages == []
+
+    assert io.read_text(tmp_path / "missing.py") is None
+    assert io.messages == [f"{tmp_path / 'missing.py'}: file not found error"]
