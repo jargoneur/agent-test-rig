@@ -16,6 +16,7 @@ models:
       do_sample: false
 
 scaffolds:
+  - no_scaffold
   - sweagent_last5
   - aider_repomap
   - agentless_localization

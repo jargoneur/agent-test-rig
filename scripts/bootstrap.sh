@@ -140,7 +140,7 @@ if [[ "$SKIP_LLAMA_BUILD" -eq 0 ]]; then
 fi
 
 if [[ "$PREPARE_CONTEXTBENCH" -eq 1 ]]; then
-    .venv/bin/python scripts/prepare_contextbench.py --limit 150
+    .venv/bin/python scripts/prepare_contextbench_core.py --limit 150
 fi
 
 .venv/bin/python - <<'PY'
@@ -175,11 +175,17 @@ PY
     test_experiment_jobs.py \
     test_scheduler_store.py \
     test_distributed_scheduler_store.py \
+    test_distributed_recovery_validation.py \
     test_model_adapter.py \
     test_model_profiles.py \
+    test_launch_gate.py \
+    test_prepare_worker_registry.py \
+    test_validate_model_profile.py \
     test_resource_policy.py \
     test_worker_configs.py \
     test_contextbench_runtime.py \
+    test_contextbench_design.py \
+    test_evaluate_contextbench.py \
     test_scaffold_runtime.py
 
 echo

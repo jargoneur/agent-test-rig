@@ -57,6 +57,39 @@ def repository_size_bytes(info: Any) -> Optional[int]:
     return sum(sizes)
 
 
+def source_weight_manifest(info: Any) -> Dict[str, Any]:
+    files = []
+    for sibling in getattr(info, "siblings", None) or []:
+        name = str(getattr(sibling, "rfilename", "") or "")
+        if not name.lower().endswith((".safetensors", ".bin", ".pt")):
+            continue
+        lfs = getattr(sibling, "lfs", None)
+        digest = (
+            getattr(lfs, "sha256", None)
+            if lfs is not None and not isinstance(lfs, dict)
+            else (lfs or {}).get("sha256")
+        )
+        if not digest:
+            raise RuntimeError("Source weight has no immutable LFS hash: %s" % name)
+        files.append(
+            {
+                "path": name,
+                "size": int(getattr(sibling, "size", 0) or 0),
+                "sha256": str(digest),
+            }
+        )
+    if not files:
+        raise RuntimeError("Model repository reports no source weight files")
+    files.sort(key=lambda item: item["path"])
+    payload = json.dumps(
+        files, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return {
+        "files": files,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
 def check_storage(
     output_root: Path,
     estimated_required_bytes: Optional[int],
@@ -158,6 +191,7 @@ def main() -> None:
             "Revision mismatch: requested %s, resolved %s"
             % (revision, resolved_revision)
         )
+    source_weights = source_weight_manifest(info)
 
     output_root = Path(args.output_root).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -278,6 +312,8 @@ def main() -> None:
         "artifact": str(final_path),
         "artifact_sha256": digest,
         "quantization": "Q8_0",
+        "source_weight_manifest_sha256": source_weights["sha256"],
+        "source_weight_files": source_weights["files"],
         "source_snapshot_retained": bool(args.keep_source_snapshot and snapshot.exists()),
         "storage_preflight": storage_report,
         "llama_cpp_commit": subprocess.check_output(

@@ -5,9 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 : "${SCHEDULER_URL:?Set SCHEDULER_URL to the central scheduler URL}"
-: "${SCHEDULER_TOKEN:?Set SCHEDULER_TOKEN to the scheduler token}"
+: "${SCHEDULER_TOKEN_FILE:?Set SCHEDULER_TOKEN_FILE to the protected token path}"
 
 SOURCE_REGISTRY="${MODEL_REGISTRY:-model_artifacts/registry.yml}"
+MODEL_PROFILE_LOCK="${MODEL_PROFILE_LOCK:-experiments/model_profiles.lock.yml}"
 WORKER_ID="${WORKER_ID:-$(hostname)-gpu${WORKER_GPU:-none}}"
 WORKER_GPU="${WORKER_GPU:-}"
 LLAMA_PORT="${LLAMA_PORT:-8080}"
@@ -37,11 +38,21 @@ if [[ ! -f "$SOURCE_REGISTRY" ]]; then
     exit 1
 fi
 
+if [[ ! -f "$MODEL_PROFILE_LOCK" ]]; then
+    echo "Missing model profile lock: $MODEL_PROFILE_LOCK" >&2
+    exit 1
+fi
+if [[ ! -f "$SCHEDULER_TOKEN_FILE" ]]; then
+    echo "Missing scheduler token file: $SCHEDULER_TOKEN_FILE" >&2
+    exit 1
+fi
+
 mkdir -p "$RUN_DIR" "logs/workers/$WORKER_ID"
 rm -f "$PAUSE_FILE"
 
 VALIDATE_ARGS=(
     --registry "$SOURCE_REGISTRY"
+    --profile-lock "$MODEL_PROFILE_LOCK"
     --output "$FILTERED_REGISTRY"
 )
 IFS=',' read -r -a REQUESTED_MODELS <<< "$MODEL_IDS"
@@ -64,6 +75,8 @@ PY
 
 cat > "$CONFIG" <<YAML
 worker_id: $WORKER_ID
+scheduler_token_file: $SCHEDULER_TOKEN_FILE
+require_clean_repository: true
 scheduler_url: $SCHEDULER_URL
 results_root: distributed_results/$WORKER_ID
 lease_seconds: 14400
@@ -119,7 +132,6 @@ fi
 
 echo "Starting worker $WORKER_ID"
 echo "Config: $CONFIG"
-exec env SCHEDULER_TOKEN="$SCHEDULER_TOKEN" \
-    .venv/bin/python run_scheduled_worker.py \
+exec .venv/bin/python run_scheduled_worker.py \
     --config "$CONFIG" \
     --pause-file "$PAUSE_FILE"

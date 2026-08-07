@@ -6,9 +6,14 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+import sys
 from typing import Any, Dict, Iterable, List
 
 from datasets import Dataset, load_dataset
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
 
 from harness.upstreams import PROJECT_ROOT, component_spec, upstream_path
 
@@ -137,7 +142,11 @@ def main() -> None:
 
     write_jsonl(tasks_path, merged)
     with selected_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(selected[0]))
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=list(selected[0]),
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(selected)
     Dataset.from_list(merged).to_parquet(str(gold_path))

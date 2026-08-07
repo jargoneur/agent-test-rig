@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from scaffolds.agentless_localization import Scaffold as AgentlessScaffold
+from scaffolds.no_scaffold import NoScaffold
 from scaffolds.upstream_base import AiderIOShim, UpstreamScaffold
 
 
@@ -29,6 +30,38 @@ class DummyModel:
         self.seeds.append(seed)
         self.last_generation_metadata = {"seed": seed}
         return "summary"
+
+
+class DummyTools:
+    def list_files(self, limit=400):
+        return ["would-not-be-injected.py"]
+
+
+def test_no_scaffold_has_no_precomputed_context_and_keeps_full_history():
+    scaffold = NoScaffold(
+        model=DummyModel(),
+        task={"id": "control", "tests_enabled": False},
+        options={},
+    )
+    tools = DummyTools()
+    state = scaffold.init_state("task", tools)
+    history = [
+        {
+            "step": index,
+            "action": {"action": "finish"},
+            "observation": {"type": "finished"},
+        }
+        for index in range(1, 9)
+    ]
+
+    prompt = scaffold.build_context("task", tools, history, state)
+
+    assert state["context_files"] == []
+    assert state["context_spans"] == {}
+    assert "No precomputed repository context" in prompt
+    assert "would-not-be-injected.py" not in prompt
+    assert '"step": 1' in prompt
+    assert '"step": 8' in prompt
 
 
 def test_auxiliary_calls_are_seeded_logged_and_checkpointed():

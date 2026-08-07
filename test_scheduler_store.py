@@ -40,11 +40,12 @@ def test_scheduler_claims_and_completes_full_scaffold_block(tmp_path):
 
     results = [
         {
-            "schema_version": 1,
+            "schema_version": 3,
             "status": "completed",
             "run_id": job["run_id"],
             "job": job,
             "result": {"final_tests_passed": True},
+            "outcome": {"usable_result": True},
         }
         for job in claim["block"]["jobs"]
     ]

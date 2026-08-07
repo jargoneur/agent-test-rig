@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 from harness.reproducibility import derive_run_seed, git_metadata, utc_now_iso
 
 
-JOB_SCHEMA_VERSION = 2
+JOB_SCHEMA_VERSION = 3
 
 
 def canonical_json(value: Any) -> str:
@@ -77,6 +77,7 @@ def block_identity(job: Dict[str, Any]) -> Dict[str, Any]:
     """Identity shared by all scaffold conditions of one paired block."""
     return {
         "schema_version": JOB_SCHEMA_VERSION,
+        "experiment_id": str(job["experiment_id"]),
         "task_id": job["task_id"],
         "model": model_identity(job["model"]),
         "repeat": int(job["repeat"]),
@@ -84,12 +85,14 @@ def block_identity(job: Dict[str, Any]) -> Dict[str, Any]:
         "max_steps": int(job["max_steps"]),
         "generation_options": job["generation_options"],
         "harness_commit": job.get("harness_commit", ""),
+        "recovery": dict(job.get("recovery") or {}),
     }
 
 
 def job_identity(job: Dict[str, Any]) -> Dict[str, Any]:
     identity = block_identity(job)
     identity["scaffold"] = job["scaffold"]
+    identity["scaffold_options"] = dict(job.get("scaffold_options") or {})
     return identity
 
 
@@ -106,6 +109,7 @@ def make_run_id(job: Dict[str, Any]) -> str:
 def validate_job(job: Dict[str, Any]) -> None:
     required = {
         "schema_version",
+        "experiment_id",
         "block_id",
         "run_id",
         "task_id",
@@ -147,6 +151,7 @@ def build_jobs(
     wave_size: int = 25,
     harness_commit: Optional[str] = None,
     default_backend: str = "ollama",
+    max_infrastructure_retries: int = 2,
 ) -> List[Dict[str, Any]]:
     if repeats < 1:
         raise ValueError("repeats must be at least 1")
@@ -156,6 +161,8 @@ def build_jobs(
         raise ValueError("At least one scaffold is required")
     if len(set(scaffolds)) != len(scaffolds):
         raise ValueError("Scaffold names must be unique")
+    if max_infrastructure_retries < 0:
+        raise ValueError("max_infrastructure_retries must be non-negative")
 
     normalized_models = [
         normalize_model_spec(model, default_backend=default_backend)
@@ -198,6 +205,13 @@ def build_jobs(
                         "max_steps": int(max_steps),
                         "generation_options": dict(model_generation_options),
                         "harness_commit": harness_commit or "",
+                        "recovery": {
+                            "whole_block_restart": True,
+                            "reuse_partial_results": False,
+                            "max_infrastructure_retries": int(
+                                max_infrastructure_retries
+                            ),
+                        },
                         "requirements": {
                             "resource_class": model.get("resource_class"),
                         },
@@ -244,6 +258,10 @@ def group_jobs_by_block(jobs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "wave": int(first.get("wave", 0)),
                 "task_id": first["task_id"],
                 "model_id": first["model"]["id"],
+                "model": model_identity(first["model"]),
+                "generation_options": dict(first["generation_options"]),
+                "harness_commit": str(first.get("harness_commit") or ""),
+                "recovery": dict(first.get("recovery") or {}),
                 "resource_class": (first.get("requirements") or {}).get(
                     "resource_class"
                 ),
@@ -390,7 +408,7 @@ def plan_metadata(
 ) -> Dict[str, Any]:
     blocks = group_jobs_by_block(jobs)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": utc_now_iso(),
         "experiment_id": experiment_id,
         "manifest_path": manifest_path,

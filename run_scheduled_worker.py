@@ -15,6 +15,7 @@ import yaml
 
 from harness.experiment_jobs import atomic_write_json, result_file
 from harness.llama_cpp_server import LlamaCppServerManager
+from harness.reproducibility import git_metadata
 from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
 from run_worker import execute_job
 
@@ -170,6 +171,7 @@ def release_scheduler_lease_for_yield(
             "lease_token": lease_token,
             "error": "resource_yield: %s" % reason,
             "retry": True,
+            "failure_kind": "resource_yield",
         },
         retries=3,
     )
@@ -194,6 +196,7 @@ def _resolve_capabilities(
     capabilities = dict(config.get("capabilities") or {})
     if model_manager is not None:
         provisioned = set(model_manager.model_ids(verify=True))
+        provisioned_profiles = model_manager.model_profiles()
         configured = set(str(value) for value in capabilities.get("model_ids", []))
         if configured:
             missing = configured.difference(provisioned)
@@ -203,8 +206,13 @@ def _resolve_capabilities(
                     % ", ".join(sorted(missing))
                 )
             capabilities["model_ids"] = sorted(configured)
+            capabilities["model_profiles"] = {
+                model_id: provisioned_profiles[model_id]
+                for model_id in sorted(configured)
+            }
         else:
             capabilities["model_ids"] = sorted(provisioned)
+            capabilities["model_profiles"] = provisioned_profiles
     if not capabilities.get("model_ids"):
         raise ValueError("Worker has no locally verified model artifacts")
     return capabilities
@@ -227,8 +235,28 @@ def main() -> None:
     worker_id = str(config.get("worker_id") or socket.gethostname())
     scheduler_url = str(config["scheduler_url"])
     token = config.get("scheduler_token") or os.environ.get("SCHEDULER_TOKEN")
+    token_file = config.get("scheduler_token_file") or os.environ.get(
+        "SCHEDULER_TOKEN_FILE"
+    )
+    if token_file:
+        if token:
+            raise ValueError("Use a scheduler token value or token file, not both")
+        token = Path(str(token_file)).expanduser().read_text(
+            encoding="utf-8"
+        ).strip()
+        if not token:
+            raise ValueError("Scheduler token file is empty")
     model_manager = _build_model_manager(config, worker_id)
     capabilities = _resolve_capabilities(config, model_manager)
+    repository = git_metadata()
+    if not repository.get("commit"):
+        raise RuntimeError("Worker repository commit could not be resolved")
+    if bool(config.get("require_clean_repository", True)) and repository.get("dirty"):
+        raise RuntimeError(
+            "Worker repository is dirty; exact harness provenance is required: %s"
+            % repository.get("status_porcelain")
+        )
+    capabilities["harness_commit"] = repository["commit"]
     results_root = Path(config.get("results_root", "distributed_results/%s" % worker_id))
     results_root.mkdir(parents=True, exist_ok=True)
     lease_seconds = int(config.get("lease_seconds", 7200))
@@ -318,6 +346,21 @@ def main() -> None:
             block = claim["block"]
             block_id = block["block_id"]
             lease_token = claim["lease_token"]
+            attempt = int(claim.get("attempt") or 1)
+            attempt_root = (
+                results_root
+                / "attempts"
+                / block_id
+                / ("attempt_%06d" % attempt)
+            )
+            atomic_write_json(
+                attempt_root / "attempt.json",
+                {
+                    "block_id": block_id,
+                    "attempt": attempt,
+                    "worker_id": worker_id,
+                },
+            )
             active_model_id = block["model_id"]
             heartbeat_payload = {
                 "worker_id": worker_id,
@@ -366,36 +409,18 @@ def main() -> None:
                             heartbeat.pause_reason or "central scheduler pause"
                         )
 
-                    output_path = result_file(results_root, job["run_id"])
-                    if output_path.exists():
-                        try:
-                            existing = json.loads(
-                                output_path.read_text(encoding="utf-8")
-                            )
-                        except (OSError, ValueError, json.JSONDecodeError):
-                            existing = None
-                        if existing and existing.get("status") == "completed":
-                            records.append(existing)
-                        else:
-                            record = execute_job(
-                                job,
-                                results_root,
-                                worker_id,
-                                resource_policy=resource_policy,
-                                runtime_overrides=runtime_overrides,
-                            )
-                            atomic_write_json(output_path, record)
-                            records.append(record)
-                    else:
-                        record = execute_job(
-                            job,
-                            results_root,
-                            worker_id,
-                            resource_policy=resource_policy,
-                            runtime_overrides=runtime_overrides,
-                        )
-                        atomic_write_json(output_path, record)
-                        records.append(record)
+                    output_path = result_file(attempt_root, job["run_id"])
+                    record = execute_job(
+                        job,
+                        attempt_root,
+                        worker_id,
+                        resource_policy=resource_policy,
+                        runtime_overrides=runtime_overrides,
+                    )
+                    record["block_attempt"] = attempt
+                    record["attempt_root"] = str(attempt_root)
+                    atomic_write_json(output_path, record)
+                    records.append(record)
 
                     # Once the full paired block is finished, completing it is
                     # safer than discarding it merely because pause arrived
@@ -418,6 +443,14 @@ def main() -> None:
                     retries=completion_retries,
                     timeout=completion_timeout,
                 )
+                for record in records:
+                    try:
+                        atomic_write_json(
+                            result_file(results_root, record["run_id"]),
+                            record,
+                        )
+                    except OSError as error:
+                        print("Canonical local result copy warning:", error)
                 heartbeat.stop()
                 completed_blocks += 1
                 print("Completed block:", block_id)
@@ -450,6 +483,7 @@ def main() -> None:
                             "lease_token": lease_token,
                             "error": "worker interrupted",
                             "retry": True,
+                            "failure_kind": "operator_stop",
                         },
                         retries=2,
                     )
@@ -458,15 +492,17 @@ def main() -> None:
             except Exception as error:
                 heartbeat.stop()
                 print("Block failed:", error)
-                failure_path = results_root / "failed_blocks" / (block_id + ".json")
+                failure_path = attempt_root / "block_failure.json"
                 atomic_write_json(
                     failure_path,
                     {
                         "block_id": block_id,
+                        "attempt": attempt,
                         "worker_id": worker_id,
                         "resource_policy": resource_policy.metadata(),
                         "error": str(error),
                         "traceback": traceback.format_exc(),
+                        "partial_run_ids": [item.get("run_id") for item in records],
                     },
                 )
                 try:
@@ -478,6 +514,7 @@ def main() -> None:
                             "lease_token": lease_token,
                             "error": str(error),
                             "retry": bool(config.get("retry_failed_blocks", True)),
+                            "failure_kind": "infrastructure",
                         },
                         retries=3,
                     )

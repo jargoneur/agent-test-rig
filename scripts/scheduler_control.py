@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
@@ -38,22 +39,31 @@ def main() -> None:
         default=os.environ.get("SCHEDULER_URL", "http://127.0.0.1:8787"),
     )
     parser.add_argument("--token", default=os.environ.get("SCHEDULER_TOKEN"))
+    parser.add_argument("--token-file")
     parser.add_argument("--reason", default="manual operator pause")
     parser.add_argument("--label", default="manual")
     args = parser.parse_args()
 
+    token = args.token
+    if args.token_file:
+        if token:
+            raise ValueError("Use either --token/SCHEDULER_TOKEN or --token-file")
+        token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        if not token:
+            raise ValueError("Scheduler token file is empty")
+
     base = args.scheduler_url.rstrip("/")
     if args.action == "status":
-        value = request("GET", base + "/status", args.token)
+        value = request("GET", base + "/status", token)
     elif args.action == "pause":
         value = request(
-            "POST", base + "/pause", args.token, {"reason": args.reason}
+            "POST", base + "/pause", token, {"reason": args.reason}
         )
     elif args.action == "resume":
-        value = request("POST", base + "/resume", args.token, {})
+        value = request("POST", base + "/resume", token, {})
     else:
         value = request(
-            "POST", base + "/backup", args.token, {"label": args.label}
+            "POST", base + "/backup", token, {"label": args.label}
         )
     print(json.dumps(value, indent=2, ensure_ascii=False))
 

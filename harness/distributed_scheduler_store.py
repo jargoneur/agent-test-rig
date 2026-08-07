@@ -175,9 +175,35 @@ class DistributedSchedulerStore(SchedulerStore):
             str(value) for value in capabilities.get("resource_classes", [])
         ]
         waves = [int(value) for value in capabilities.get("waves", [])]
+        model_profiles = dict(capabilities.get("model_profiles") or {})
+        harness_commit = str(capabilities.get("harness_commit") or "")
         if not model_ids:
             raise ValueError(
                 "Worker must advertise at least one locally verified model_id"
+            )
+        if not harness_commit:
+            raise ValueError("Worker must advertise its exact harness_commit")
+
+        profile_clauses = []
+        profile_parameters: List[Any] = []
+        for model_id in model_ids:
+            profile = dict(model_profiles.get(model_id) or {})
+            profile_sha256 = str(profile.get("profile_sha256") or "")
+            artifact_sha256 = str(
+                profile.get("quantized_artifact_sha256")
+                or profile.get("artifact_sha256")
+                or ""
+            )
+            if not profile_sha256 or not artifact_sha256:
+                raise ValueError(
+                    "Worker model %s lacks exact profile/artifact provenance"
+                    % model_id
+                )
+            profile_clauses.append(
+                "(model_id = ? AND profile_sha256 = ? AND artifact_sha256 = ?)"
+            )
+            profile_parameters.extend(
+                [model_id, profile_sha256, artifact_sha256]
             )
 
         token = "%s:%d" % (worker_id, time.time_ns())
@@ -185,9 +211,12 @@ class DistributedSchedulerStore(SchedulerStore):
         now_epoch = time.time()
         lease_expires_at = now_epoch + max(30, int(lease_seconds))
 
-        model_placeholders = ",".join("?" for _ in model_ids)
-        clauses = ["state = 'pending'", "model_id IN (%s)" % model_placeholders]
-        parameters: List[Any] = list(model_ids)
+        clauses = [
+            "state = 'pending'",
+            "harness_commit = ?",
+            "(" + " OR ".join(profile_clauses) + ")",
+        ]
+        parameters: List[Any] = [harness_commit] + profile_parameters
 
         if resource_classes:
             class_placeholders = ",".join("?" for _ in resource_classes)
@@ -265,6 +294,8 @@ class DistributedSchedulerStore(SchedulerStore):
         return {
             "lease_token": token,
             "lease_expires_at": lease_expires_at,
+            "attempt": int(row["attempts"]) + 1,
+            "infrastructure_failures": int(row["infrastructure_failures"]),
             "block": block,
         }
 
@@ -295,12 +326,7 @@ class DistributedSchedulerStore(SchedulerStore):
                     raise ValueError("Unknown block: %s" % block_id)
 
                 block = json.loads(row["payload_json"])
-                expected = {job["run_id"] for job in block["jobs"]}
-                received = {record.get("run_id") for record in results}
-                if received != expected:
-                    raise ValueError(
-                        "Completed block must contain exactly the expected run IDs"
-                    )
+                self._validate_completed_results(block, results)
 
                 if row["state"] == "completed":
                     existing_rows = connection.execute(

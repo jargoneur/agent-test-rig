@@ -1,7 +1,7 @@
 # Model Selection for the Context-Management Study
 
-**Status:** family membership fixed; exact revisions and deployment profiles pending  
-**Date:** 2026-08-06
+**Status:** exact revisions and official metadata frozen; artifacts and measured deployment validation pending
+**Date:** 2026-08-07
 
 ## Binding study design
 
@@ -35,22 +35,29 @@ These five official instruction checkpoints define the Gemma 4 family used by th
 ## Core size
 
 ```text
-11 models × 150 tasks × 4 scaffolds × 3 repeats = 19,800 runs
+11 models × 150 tasks × 5 conditions × 3 repeats = 24,750 runs
 ```
 
-Approximately 50 GPU-hours per model, including prefill, remains a planning estimate. Applied linearly, the eleven-model core is approximately 550 GPU-hours; this is not a measured runtime claim.
+Cost is not a research factor. Runtime and resource use are operational
+telemetry and do not determine model, task, or condition inclusion.
 
 ## Hardware and deployment constraint
 
-The intended deployment envelope remains:
+The frozen deployment policy is:
 
 - one GPU with 32 GB VRAM per worker;
-- 8-bit weight quantization target;
-- 16-bit KV cache target;
-- common active context limit determined after measured memory profiling;
-- model, KV cache, runtime buffers and safety margin must fit without CPU offload for the one-GPU condition.
+- one exact Q8_0 GGUF artifact per model on every worker;
+- each checkpoint's native advertised context length, not an arbitrary common
+  context restriction;
+- a frozen per-model KV-cache precision, currently Q8_0 for K and V;
+- CPU offload and llama.cpp fit handling are allowed;
+- the complete deployment profile is identical across all five conditions.
 
-This envelope must be measured for every checkpoint. If a complete-family member does not fit under the intended profile, that result is documented as an explicit deployment constraint and resolved through a protocol decision. The model must not be silently removed.
+Every checkpoint must complete a full native-context prefill validation and
+record measured peak VRAM plus its frozen fit safety target. If a model can run
+under the frozen profile, it remains in the experiment; a terminal model or
+context failure is retained as usable data rather than silently removing the
+model.
 
 ## Distributed execution requirement
 
@@ -74,20 +81,21 @@ For each checkpoint, the following remain to be resolved and frozen from authori
 - thinking mode where applicable;
 - quantized artifact hash;
 - measured peak VRAM including prefill;
-- final common context limit.
+- validated native-context deployment profile.
 
 ## Freeze gate
 
-The final 19,800-run manifest may be generated only after:
+The final 24,750-run manifest may be generated only after:
 
 1. every source revision resolves to an exact immutable revision;
 2. official generation profiles are recorded;
 3. every source, tokenizer and template hash is recorded;
 4. every int8 artifact is built and hashed;
-5. FP16 KV-cache behavior is validated;
-6. measured peak VRAM including prefill is recorded with safety margin;
+5. the frozen per-model KV-cache profile is validated;
+6. full native-context prefill and measured peak VRAM are recorded;
 7. every worker advertises only locally verified artifacts;
-8. current-head distributed smoke tests pass.
+8. current-head distributed recovery, stop/resume, backup/restore, and
+   provenance-mismatch tests pass.
 
 ## Plato operating permission
 

@@ -1,40 +1,36 @@
 worker_id: plato-v100
 scheduler_url: http://127.0.0.1:8787
+scheduler_token_file: run/plato/scheduler.token
 results_root: distributed_results/plato-v100
-lease_seconds: 7200
-heartbeat_seconds: 60
-idle_seconds: 30
+lease_seconds: 14400
+heartbeat_seconds: 30
+idle_seconds: 10
 stop_when_idle: false
 retry_failed_blocks: true
+require_clean_repository: true
 
 resource_policy:
   shared_resource: true
   other_users_priority: true
-  mode: scheduler_preemptible
-  priority_mechanism_verified: false
-  verification_reference: pending_confirmation_from_resource_owner
+  mode: manual_operator
+  operator_acknowledgement: user_started_manually_under_prof_eck_permission
+  verification_reference: prof_eck_permission_compute_until_contact_2026-08-05
   release_managed_externally: true
-  pause_file: PAUSE
+  pause_file: run/workers/plato-v100/PAUSE
   command_timeout_seconds: 30
 
-  # Set verification to true only after the real queue/QoS or operating
-  # procedure has been confirmed in writing. The worker intentionally refuses
-  # to start while verification is false.
-  #
-  # For a manually shared machine, change mode to external_yield_signal,
-  # set release_managed_externally to false, and provide both commands below.
-  # availability_command must exit non-zero when another user needs the GPU.
-  # release_command must stop the model server and release the allocation.
-  # availability_command: /path/to/check_gpu_available_for_project.sh
-  # release_command: /path/to/release_model_server_and_gpu.sh
+model_runtime:
+  type: llama_cpp
+  registry: run/workers/plato-v100/verified-registry.yml
+  binary: .upstreams/llama.cpp/build/bin/llama-server
+  host: 127.0.0.1
+  port: 8080
+  gpu: GPU-REPLACE-WITH-EXPLICIT-UUID
 
 capabilities:
+  model_ids:
+    - qwen3_5_0_8b
   resource_classes:
     - small
     - medium
     - large
-
-# Add model_ids only when this worker should be restricted to specific
-# checkpoints. Tasks and scaffolds are never assigned manually.
-# model_ids:
-#   - qwen35-27b-int8

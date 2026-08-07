@@ -21,6 +21,9 @@ def _write_lock(path: Path, benchmark_runs_allowed: bool) -> None:
                 "model_id": "org/model-a",
                 "model_revision": "abc123",
                 "architecture": "dense",
+                "input_context_tokens": 32768,
+                "max_new_tokens_per_action": 8192,
+                "thinking_mode": "enabled",
                 "resolved_generation_options": {
                     "do_sample": True,
                     "temperature": 0.7,
@@ -28,6 +31,7 @@ def _write_lock(path: Path, benchmark_runs_allowed: bool) -> None:
                     "top_k": 20,
                     "repetition_penalty": 1.1,
                     "resolution_note": "not a runtime option",
+                    "chat_template_kwargs": {"enable_thinking": True},
                 },
                 "stop_token_ids": [1, 2],
                 "model_artifact_sha256": "pending_download",
@@ -74,8 +78,9 @@ def test_pending_profiles_can_be_resolved_only_for_validation(tmp_path):
                 "top_p": 0.8,
                 "top_k": 20,
                 "repetition_penalty": 1.1,
-                "num_ctx": 16384,
-                "num_predict": 2048,
+                "chat_template_kwargs": {"enable_thinking": True},
+                "num_ctx": 32768,
+                "num_predict": 8192,
             },
         }
     ]

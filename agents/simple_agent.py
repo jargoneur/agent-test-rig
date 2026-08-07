@@ -3,7 +3,9 @@ import json
 import re
 from pathlib import Path
 
+from harness.outcomes import ScaffoldTerminalError, TerminalRunError
 from harness.reproducibility import derive_step_seed, sha256_text
+from harness.resource_policy import ResourceYieldRequested
 
 
 class SimpleAgent:
@@ -35,6 +37,15 @@ class SimpleAgent:
     def _resource_checkpoint(self, label):
         if self.resource_policy is not None:
             self.resource_policy.checkpoint(label)
+
+    @staticmethod
+    def _scaffold_call(stage, function, *args):
+        try:
+            return function(*args)
+        except (TerminalRunError, ResourceYieldRequested, KeyboardInterrupt):
+            raise
+        except Exception as error:
+            raise ScaffoldTerminalError(stage, error) from error
 
     def parse_action(self, response):
         response = response.strip()
@@ -168,7 +179,12 @@ class SimpleAgent:
             )
 
         history = []
-        state = self.scaffold.init_state(issue, self.tools)
+        state = self._scaffold_call(
+            "scaffold_init",
+            self.scaffold.init_state,
+            issue,
+            self.tools,
+        )
         termination_reason = "max_steps"
         agent_self_verified = False
         repeated_valid_actions = 0
@@ -202,7 +218,14 @@ class SimpleAgent:
 
         for step in range(1, self.max_steps + 1):
             self._resource_checkpoint("step_%d_before_prompt" % step)
-            context = self.scaffold.build_context(issue, self.tools, history, state)
+            context = self._scaffold_call(
+                "scaffold_context",
+                self.scaffold.build_context,
+                issue,
+                self.tools,
+                history,
+                state,
+            )
             step_seed = (
                 derive_step_seed(self.run_seed, step)
                 if self.run_seed is not None
@@ -298,7 +321,13 @@ class SimpleAgent:
                 ):
                     target_file_written = True
 
-            state = self.scaffold.update_state(state, action, observation)
+            state = self._scaffold_call(
+                "scaffold_state_update",
+                self.scaffold.update_state,
+                state,
+                action,
+                observation,
+            )
             history.append(
                 {
                     "step": step,
@@ -315,7 +344,11 @@ class SimpleAgent:
                     "step_seed": step_seed,
                     "action": action,
                     "observation": observation,
-                    "scaffold_state": self.scaffold.export_state(state),
+                    "scaffold_state": self._scaffold_call(
+                        "scaffold_state_export",
+                        self.scaffold.export_state,
+                        state,
+                    ),
                     "parse_errors": parse_errors,
                     "execution_errors": execution_errors,
                     "repeated_valid_actions": repeated_valid_actions,
@@ -375,6 +408,11 @@ class SimpleAgent:
             },
         )
 
+        exported_state = self._scaffold_call(
+            "scaffold_state_export",
+            self.scaffold.export_state,
+            state,
+        )
         return {
             "tests_passed": final_tests["passed"],
             "final_tests_passed": final_tests["passed"],
@@ -387,5 +425,5 @@ class SimpleAgent:
             **diagnostics,
             "steps": len(history),
             "history": history,
-            "scaffold_state": self.scaffold.export_state(state),
+            "scaffold_state": exported_state,
         }

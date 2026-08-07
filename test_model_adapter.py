@@ -1,4 +1,38 @@
-from harness.model_adapter import OllamaModel, OpenAICompatibleModel
+import json
+
+import pytest
+import requests
+
+from harness.model_adapter import (
+    OllamaModel,
+    OpenAICompatibleModel,
+    _raise_generation_error,
+)
+from harness.outcomes import ModelTerminalError
+
+
+def response(status, message):
+    value = requests.Response()
+    value.status_code = status
+    value._content = json.dumps({"error": message}).encode()
+    return value
+
+
+def test_context_and_oom_are_terminal_capacity_outcomes():
+    with pytest.raises(ModelTerminalError) as context_error:
+        _raise_generation_error(
+            response(400, "request exceeds the available context size")
+        )
+    assert context_error.value.kind == "context_limit_exceeded"
+
+    with pytest.raises(ModelTerminalError) as oom_error:
+        _raise_generation_error(response(500, "CUDA error: out of memory"))
+    assert oom_error.value.kind == "capacity_oom"
+
+
+def test_transient_server_error_remains_retryable_infrastructure_failure():
+    with pytest.raises(requests.HTTPError):
+        _raise_generation_error(response(503, "service temporarily unavailable"))
 
 
 def test_openai_adapter_has_no_hidden_temperature_default():
@@ -23,6 +57,7 @@ def test_llama_cpp_payload_preserves_recommended_sampling_profile():
             "repetition_penalty": 1.1,
             "num_predict": 2048,
             "num_ctx": 16384,
+            "chat_template_kwargs": {"enable_thinking": True},
         },
     )
 
@@ -34,6 +69,7 @@ def test_llama_cpp_payload_preserves_recommended_sampling_profile():
     assert payload["min_p"] == 0.05
     assert payload["repeat_penalty"] == 1.1
     assert payload["max_tokens"] == 2048
+    assert payload["chat_template_kwargs"] == {"enable_thinking": True}
     assert payload["seed"] == 11
     assert "num_ctx" not in payload
     assert "do_sample" not in payload

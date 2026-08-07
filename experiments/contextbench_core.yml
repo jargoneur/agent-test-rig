@@ -1,0 +1,39 @@
+protocol_status: launch_gate_required
+experiment_id: contextbench_scaffold_boundaries_v1
+manifest: jobs/contextbench_scaffold_boundaries_v1.jsonl
+
+task_source:
+  type: contextbench
+  cache: benchmarks/contextbench/tasks.jsonl
+  limit: 150
+
+model_profile_lock: experiments/model_profiles.lock.yml
+
+scaffolds:
+  - no_scaffold
+  - sweagent_last5
+  - aider_repomap
+  - agentless_localization
+  - aider_chat_summary
+
+repeats: 3
+max_steps: 10
+base_seed: 20260807
+wave_size: 25
+max_infrastructure_retries: 2
+generation_options: {}
+
+design:
+  paired_block: model_task_repeat
+  same_host_for_all_scaffolds: true
+  whole_block_restart_after_interruption: true
+  reuse_partial_results: false
+  manual_stop_consumes_retry_budget: false
+  terminal_model_or_scaffold_failure_is_usable_result: true
+  cost_is_research_factor: false
+  expected_tasks: 150
+  expected_models: 11
+  expected_scaffolds: 5
+  expected_repeats: 3
+  expected_blocks: 4950
+  expected_runs: 24750

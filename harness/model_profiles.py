@@ -17,6 +17,7 @@ _RUNTIME_OPTION_KEYS = {
     "presence_penalty",
     "frequency_penalty",
     "stop",
+    "chat_template_kwargs",
 }
 
 
@@ -81,12 +82,17 @@ def profile_to_model_spec(
         if key in _RUNTIME_OPTION_KEYS
     }
     limits = lock.get("common_protocol_limits") or {}
-    if limits.get("input_context_tokens") is not None:
-        generation_options["num_ctx"] = int(limits["input_context_tokens"])
-    if limits.get("max_new_tokens_per_action") is not None:
-        generation_options["num_predict"] = int(
-            limits["max_new_tokens_per_action"]
-        )
+    input_context_tokens = profile.get(
+        "input_context_tokens", limits.get("input_context_tokens")
+    )
+    if input_context_tokens is not None:
+        generation_options["num_ctx"] = int(input_context_tokens)
+    max_new_tokens = profile.get(
+        "max_new_tokens_per_action",
+        limits.get("max_new_tokens_per_action"),
+    )
+    if max_new_tokens is not None:
+        generation_options["num_predict"] = int(max_new_tokens)
 
     runtime = lock.get("runtime") or {}
     model_spec: Dict[str, Any] = {

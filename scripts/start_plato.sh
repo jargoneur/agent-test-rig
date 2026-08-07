@@ -6,6 +6,8 @@ cd "$ROOT"
 
 MANIFEST="${1:-jobs/contextbench_smoke.jsonl}"
 REGISTRY="${MODEL_REGISTRY:-model_artifacts/registry.yml}"
+CORE_CONFIG="$ROOT/experiments/contextbench_core.yml"
+CORE_MANIFEST="$ROOT/jobs/contextbench_scaffold_boundaries_v1.jsonl"
 RUNTIME_DIR="$ROOT/run/plato"
 LOG_DIR="$ROOT/logs/plato"
 TOKEN_FILE="$RUNTIME_DIR/scheduler.token"
@@ -33,6 +35,10 @@ fi
 if [[ ! -f "$MANIFEST" ]]; then
     echo "Missing manifest: $MANIFEST" >&2
     exit 1
+fi
+if [[ "$(readlink -f "$MANIFEST")" == "$CORE_MANIFEST" ]]; then
+    .venv/bin/python scripts/launch_gate.py \
+        --config "$CORE_CONFIG"
 fi
 if [[ ! -f "$REGISTRY" ]]; then
     echo "Missing model registry: $REGISTRY" >&2
@@ -115,27 +121,42 @@ done
 
 mkdir -p "$RUNTIME_DIR" "$LOG_DIR" scheduler "$BACKUP_DIR"
 rm -f "$RUNTIME_DIR"/PAUSE "$RUNTIME_DIR"/worker-*.pid
+printf '%s\n' "${SELECTED_GPU_UUIDS[@]}" > "$RUNTIME_DIR/selected-gpus.txt.tmp"
+mv -f "$RUNTIME_DIR/selected-gpus.txt.tmp" "$RUNTIME_DIR/selected-gpus.txt"
+: > "$RUNTIME_DIR/worker-ports.txt.tmp"
+for index in $(seq 0 $((WORKER_COUNT - 1))); do
+    echo "$((8080 + index))" >> "$RUNTIME_DIR/worker-ports.txt.tmp"
+done
+mv -f "$RUNTIME_DIR/worker-ports.txt.tmp" "$RUNTIME_DIR/worker-ports.txt"
 
 if [[ -f "$RUNTIME_DIR/scheduler.pid" ]] && kill -0 "$(cat "$RUNTIME_DIR/scheduler.pid")" 2>/dev/null; then
     echo "Plato scheduler already appears to be running." >&2
     exit 1
 fi
 
-if [[ ! -f "$TOKEN_FILE" ]]; then
-    .venv/bin/python - <<'PY' > "$TOKEN_FILE"
+umask 077
+.venv/bin/python - <<'PY' > "$TOKEN_FILE.tmp"
 import secrets
 print(secrets.token_hex(32))
 PY
-    chmod 600 "$TOKEN_FILE"
-fi
-TOKEN="$(cat "$TOKEN_FILE")"
+chmod 600 "$TOKEN_FILE.tmp"
+mv -f "$TOKEN_FILE.tmp" "$TOKEN_FILE"
+
+STARTUP_COMPLETE=0
+cleanup_failed_start() {
+    if [[ "$STARTUP_COMPLETE" -ne 1 ]]; then
+        echo "Plato startup failed; stopping any partially started services." >&2
+        bash scripts/stop_plato.sh || true
+    fi
+}
+trap cleanup_failed_start EXIT
 
 nohup .venv/bin/python scheduler_server.py \
     --database "$SCHEDULER_DB" \
     --manifest "$MANIFEST" \
     --host 127.0.0.1 \
     --port 8787 \
-    --token "$TOKEN" \
+    --token-file "$TOKEN_FILE" \
     --backup-directory "$BACKUP_DIR" \
     --backup-interval-seconds "${SCHEDULER_BACKUP_INTERVAL_SECONDS:-900}" \
     --backup-retain "${SCHEDULER_BACKUP_RETAIN:-96}" \
@@ -144,8 +165,9 @@ echo "$!" > "$RUNTIME_DIR/scheduler.pid"
 
 ready=0
 for _ in $(seq 1 120); do
-    if curl -fsS -H "Authorization: Bearer $TOKEN" \
-        http://127.0.0.1:8787/health >/dev/null 2>&1; then
+    if .venv/bin/python scripts/scheduler_control.py status \
+        --scheduler-url http://127.0.0.1:8787 \
+        --token-file "$TOKEN_FILE" >/dev/null 2>&1; then
         ready=1
         break
     fi
@@ -164,7 +186,7 @@ fi
 # the explicit operator decision to resume claims.
 .venv/bin/python scripts/scheduler_control.py resume \
     --scheduler-url http://127.0.0.1:8787 \
-    --token "$TOKEN" >/dev/null
+    --token-file "$TOKEN_FILE" >/dev/null
 
 for index in $(seq 0 $((WORKER_COUNT - 1))); do
     gpu="${SELECTED_GPU_UUIDS[$index]}"
@@ -173,7 +195,7 @@ for index in $(seq 0 $((WORKER_COUNT - 1))); do
 
     nohup env \
         SCHEDULER_URL="http://127.0.0.1:8787" \
-        SCHEDULER_TOKEN="$TOKEN" \
+        SCHEDULER_TOKEN_FILE="$TOKEN_FILE" \
         MODEL_REGISTRY="$REGISTRY" \
         WORKER_ID="$worker_id" \
         WORKER_GPU="$gpu" \
@@ -192,6 +214,19 @@ for index in $(seq 0 $((WORKER_COUNT - 1))); do
 done
 
 sleep 3
+startup_failed=0
+for index in $(seq 0 $((WORKER_COUNT - 1))); do
+    pidfile="$RUNTIME_DIR/worker-gpu${index}.pid"
+    pid="$(cat "$pidfile")"
+    if ! kill -0 "$pid" 2>/dev/null; then
+        echo "Worker gpu${index} exited during startup." >&2
+        tail -n 80 "$LOG_DIR/worker-gpu${index}.log" >&2 || true
+        startup_failed=1
+    fi
+done
+if [[ "$startup_failed" -ne 0 ]]; then
+    exit 1
+fi
 
 echo "Plato system started."
 echo "Manifest: $MANIFEST"
@@ -204,7 +239,11 @@ echo "Storage soft limit: $STORAGE_SOFT_LIMIT_GIB GiB"
 echo "Token file: $TOKEN_FILE"
 echo "Worker logs: $LOG_DIR/worker-gpu*.log"
 echo
-curl -fsS -H "Authorization: Bearer $TOKEN" \
-    http://127.0.0.1:8787/status | .venv/bin/python -m json.tool
+.venv/bin/python scripts/scheduler_control.py status \
+    --scheduler-url http://127.0.0.1:8787 \
+    --token-file "$TOKEN_FILE"
 echo
 nvidia-smi
+
+STARTUP_COMPLETE=1
+trap - EXIT
