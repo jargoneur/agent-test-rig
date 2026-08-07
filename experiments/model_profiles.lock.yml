@@ -1,9 +1,8 @@
 schema_version: 4
-status: family_membership_fixed_profiles_pending
-frozen_at: "2026-08-06"
+status: official_metadata_frozen_artifacts_pending
+frozen_at: '2026-08-07'
 policy_document: docs/model_inference_policy.md
 selection_document: docs/model_selection.md
-
 selection_rule:
   source: user_protocol_decision_two_complete_families
   target_model_count: 11
@@ -13,33 +12,30 @@ selection_rule:
   official_sources_only: true
   unofficial_presets_allowed: false
   local_tuning_allowed: false
-
 paired_execution:
   same_profile_across_scaffolds: true
   same_seed_across_scaffolds: true
   same_profile_across_workers: true
   reject_runtime_mismatch: true
-
 hardware_envelope:
   gpu_vram_gib: 32
   weight_quantization_target: int8
-  kv_cache_precision_target: fp16
-  cpu_offload_allowed: false
+  kv_cache_precision_target: per_model_validated
+  kv_cache_quantization_allowed: true
+  cpu_offload_allowed: true
+  deployment_profile_must_be_identical_across_scaffolds: true
   include_prefill_peak_in_validation: true
   require_runtime_safety_margin: true
-
 common_protocol_limits:
   input_context_tokens: null
-  max_new_tokens_per_action: 2048
-
+  max_new_tokens_per_action: null
 runtime:
-  backend: llama_cpp_pending_checkpoint_validation
-  backend_revision: pending_validation
-  target_quantization: int8
+  backend: llama.cpp_openai_compatible
+  backend_revision: 6ea215d171fd31df943bf1ac8227129f2b963160
+  target_quantization: Q8_0
   artifact_rule: one_identical_hashed_artifact_per_model_on_every_worker
   advertise_only_locally_verified_artifacts: true
-
-profile_defaults: &pending_profile
+profile_defaults:
   model_revision: pending_resolution
   generation_profile_status: pending_official_extraction
   resolved_generation_options: {}
@@ -50,98 +46,492 @@ profile_defaults: &pending_profile
   profile_sha256: pending_resolution
   measured_peak_vram_gib: pending_measurement
   deployment_status: pending_validation
-
 models:
   qwen3_5_0_8b:
-    <<: *pending_profile
+    model_revision: 2fc06364715b967f1860aea9cf38778875588b17
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      chat_template_kwargs: &id001
+        enable_thinking: true
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+    chat_template_sha256: 273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: Qwen/Qwen3.5-0.8B
     family: qwen3.5
     architecture: dense
     parameters_billion: 0.8
-
+    generation_profile_source: README.md precise-coding thinking recommendation
+    thinking_mode: enabled_precise_coding
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: e4c7a3abb3a4cdab7ad97753c55db6c7b446f8c13fd5f0bd99bd2c6e84d1bffe
+    config_sha256: b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204
+    generation_config_sha256: null
+    stop_token_ids:
+    - 248044
+    resource_class: small
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   qwen3_5_2b:
-    <<: *pending_profile
+    model_revision: 15852e8c16360a2fea060d615a32b45270f8a8fc
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      chat_template_kwargs: *id001
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+    chat_template_sha256: 273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: Qwen/Qwen3.5-2B
     family: qwen3.5
     architecture: dense
     parameters_billion: 2
-
+    generation_profile_source: README.md precise-coding thinking recommendation
+    thinking_mode: enabled_precise_coding
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 1843e3cc549e2cca977bbdc89c87954f4b9796dc663116262ba6e87d256709a3
+    config_sha256: ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4
+    generation_config_sha256: null
+    stop_token_ids:
+    - 248044
+    resource_class: small
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   qwen3_5_4b:
-    <<: *pending_profile
+    model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      chat_template_kwargs: *id001
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+    chat_template_sha256: a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: Qwen/Qwen3.5-4B
     family: qwen3.5
     architecture: dense
     parameters_billion: 4
-
+    generation_profile_source: README.md precise-coding thinking recommendation
+    thinking_mode: enabled_precise_coding
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: b51e089b2582ab08be4c2048f4b1047121f01ad3b0eb9a57a3f95fe59b6f316b
+    config_sha256: ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670
+    generation_config_sha256: null
+    stop_token_ids:
+    - 248044
+    resource_class: small
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   qwen3_5_9b:
-    <<: *pending_profile
+    model_revision: c202236235762e1c871ad0ccb60c8ee5ba337b9a
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      chat_template_kwargs: *id001
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+    chat_template_sha256: a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: Qwen/Qwen3.5-9B
     family: qwen3.5
     architecture: dense
     parameters_billion: 9
-
+    generation_profile_source: README.md precise-coding thinking recommendation
+    thinking_mode: enabled_precise_coding
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 791521a861d1a03cea9b15bcbaa229925cfaaf80e8ac43472819a6e97f26c196
+    config_sha256: d0883072e01861ed0b2d47be3c16c36a8e81c224c7ffaa310c6558fb3f932b05
+    generation_config_sha256: null
+    stop_token_ids:
+    - 248044
+    resource_class: medium
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   qwen3_5_27b:
-    <<: *pending_profile
+    model_revision: fc05daec18b0a78c049392ed2e771dde82bdf654
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      chat_template_kwargs: *id001
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+    chat_template_sha256: a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: Qwen/Qwen3.5-27B
     family: qwen3.5
     architecture: dense
     parameters_billion: 27
-
+    generation_profile_source: README.md precise-coding thinking recommendation
+    thinking_mode: enabled_precise_coding
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 64e945b05d887da8efb6c3dd266869e07e7686e7bea6d2b205f0bac87aa2457a
+    config_sha256: f8d190c5b89c1521220f935d2567a587d6e291ed69066a45a106560b05a2174c
+    generation_config_sha256: 303aba891d66ab63908a7b3cc9163bcb835fdf8b9f6301c73216f3f1eb3992dd
+    stop_token_ids:
+    - 248046
+    - 248044
+    resource_class: large
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   qwen3_5_35b_a3b:
-    <<: *pending_profile
+    model_revision: 59d61f3ce65a6d9863b86d2e96597125219dc754
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      chat_template_kwargs: *id001
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+    chat_template_sha256: a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: Qwen/Qwen3.5-35B-A3B
     family: qwen3.5
     architecture: mixture_of_experts
     parameters_billion_total: 35
     parameters_billion_active: 3
-
+    generation_profile_source: README.md precise-coding thinking recommendation
+    thinking_mode: enabled_precise_coding
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 3c3e7a56aebfab673d751114643bbeecc0ea2e54ac708e1e5ba882eb959aa6a4
+    config_sha256: 5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944
+    generation_config_sha256: 4f25002776b741773666203dcea8f54619f177ace3ae483d311102092a4658e0
+    stop_token_ids:
+    - 248046
+    - 248044
+    resource_class: large
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   gemma4_e2b_it:
-    <<: *pending_profile
+    model_revision: 3e22461f65e89153144f8adb70e3b8c2cc9845a7
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 64
+      chat_template_kwargs: &id002
+        enable_thinking: true
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f
+    chat_template_sha256: 0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: google/gemma-4-E2B-it
     family: gemma4
-    architecture: pending_official_profile_extraction
+    architecture: dense
     parameters_label: E2B
-
+    generation_profile_source: README.md best-practices standardized sampling
+    thinking_mode: enabled
+    input_context_tokens: 131072
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 15ee9824890df65685ece8ce701e62c69ac0a7b6b93fe106153dde7ecc1e0fec
+    config_sha256: 1b28f3d2c3100f6c594754b81107428bd7b822a7f48272ca681dae9d2ec38330
+    generation_config_sha256: d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de
+    stop_token_ids:
+    - 1
+    - 106
+    - 50
+    resource_class: small
+    deployment_profile:
+      context_size: 131072
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   gemma4_e4b_it:
-    <<: *pending_profile
+    model_revision: ee0ef6023621cff504d758262d4e04895a5af4a2
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 64
+      chat_template_kwargs: *id002
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f
+    chat_template_sha256: 0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: google/gemma-4-E4B-it
     family: gemma4
-    architecture: pending_official_profile_extraction
+    architecture: dense
     parameters_label: E4B
-
+    generation_profile_source: README.md best-practices standardized sampling
+    thinking_mode: enabled
+    input_context_tokens: 131072
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 7d69618b61a90564a3828f6853b9bba92dc711a281947405c6abf61c45e902f4
+    config_sha256: 33b10c02df3c2e8536cf323d29d53262aaa2f4d11dbe19bc729373fbe90295d4
+    generation_config_sha256: d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de
+    stop_token_ids:
+    - 1
+    - 106
+    - 50
+    resource_class: small
+    deployment_profile:
+      context_size: 131072
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   gemma4_12b_it:
-    <<: *pending_profile
+    model_revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 64
+      chat_template_kwargs: *id002
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f
+    chat_template_sha256: ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: google/gemma-4-12B-it
     family: gemma4
-    architecture: pending_official_profile_extraction
+    architecture: dense
     parameters_label: 12B
-
+    generation_profile_source: README.md best-practices standardized sampling
+    thinking_mode: enabled
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 94ecdef5b83c650514f91d7bda1f9a6440505a7d39157548faa08f54ea3e7cf2
+    config_sha256: 478c46e8d2c52d5c2d85bf67e3b3e8c90e7c9d91086cee27e3c267907e936bd9
+    generation_config_sha256: a8349d9bd64cc5841297fcb5002f0fdc4749c473c8f1b10ea337f9ce4ee7014e
+    stop_token_ids:
+    - 1
+    - 106
+    - 50
+    resource_class: medium
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   gemma4_26b_a4b_it:
-    <<: *pending_profile
+    model_revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 64
+      chat_template_kwargs: *id002
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f
+    chat_template_sha256: ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: google/gemma-4-26B-A4B-it
     family: gemma4
     architecture: mixture_of_experts
     parameters_label: 26B-A4B
-
+    generation_profile_source: README.md best-practices standardized sampling
+    thinking_mode: enabled
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: 7f07627ce7d045a043acb8b81de5ec6301bad3b0cb7d3a86f222d2276cca9de5
+    config_sha256: ed0c1eb3633de771906e9ba004a44cc5635bcc06ee2062077c3d2e88a50707d3
+    generation_config_sha256: d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de
+    stop_token_ids:
+    - 1
+    - 106
+    - 50
+    resource_class: large
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
   gemma4_31b_it:
-    <<: *pending_profile
+    model_revision: 842da3794eaa0b77d5f08bae87a17459d91ff475
+    generation_profile_status: resolved_from_exact_official_model_card
+    resolved_generation_options:
+      do_sample: true
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 64
+      chat_template_kwargs: *id002
+    model_artifact_sha256: pending_download
+    tokenizer_sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f
+    chat_template_sha256: ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4
+    quantized_artifact_sha256: pending_quantization
+    profile_sha256: pending_resolution
+    measured_peak_vram_gib: pending_measurement
+    deployment_status: pending_validation
     model_id: google/gemma-4-31B-it
     family: gemma4
-    architecture: pending_official_profile_extraction
+    architecture: dense
     parameters_label: 31B
-
+    generation_profile_source: README.md best-practices standardized sampling
+    thinking_mode: enabled
+    input_context_tokens: 262144
+    max_new_tokens_per_action: null
+    metadata_manifest_sha256: a6953b6b4f247dc992735e49d8d3c400913822c33055ae2a32eb3f4f81b1a60b
+    config_sha256: e967dd38bc5cfd38bd09a995a7bf4a754075df2b46aba68f7fbb5a791e6d8dd1
+    generation_config_sha256: d4226bbe3117d2d253ba4609720ba82c6c4ce4627a9a6ae05387c78983ac03de
+    stop_token_ids:
+    - 1
+    - 106
+    - 50
+    resource_class: large
+    deployment_profile:
+      context_size: 262144
+      gpu_layers: all
+      parallel: 1
+      cache_type_k: q8_0
+      cache_type_v: q8_0
+      flash_attention: auto
+      fit: true
+      fit_target_mib: 1536
+      validation_status: pending_artifact_measurement
 validation_gate:
   benchmark_runs_allowed: false
   validation_smokes_allowed: true
   unblock_when:
-    - all_eleven_source_revisions_resolve
-    - official_generation_profiles_are_recorded
-    - every_model_and_tokenizer_hash_is_recorded
-    - every_chat_template_hash_is_recorded
-    - int8_artifacts_are_validated
-    - fp16_kv_cache_is_validated
-    - measured_peak_vram_including_prefill_is_recorded
-    - deployment_constraints_are_explicitly_resolved
-    - every_quantized_artifact_hash_is_recorded
-    - every_profile_hash_is_recorded
-    - distributed_current_head_smoke_passes
+  - all_eleven_source_revisions_resolve
+  - official_generation_profiles_are_recorded
+  - every_model_and_tokenizer_hash_is_recorded
+  - every_chat_template_hash_is_recorded
+  - int8_artifacts_are_validated
+  - frozen_kv_cache_profile_is_validated
+  - measured_peak_vram_including_prefill_is_recorded
+  - deployment_constraints_are_explicitly_resolved
+  - every_quantized_artifact_hash_is_recorded
+  - every_profile_hash_is_recorded
+  - distributed_recovery_evidence_is_recorded

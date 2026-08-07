@@ -10,17 +10,24 @@ The base experiment compares two complete model families rather than a hand-pick
 - all six selected Qwen3.5 instruction checkpoints;
 - all five official Gemma 4 instruction-tuned sizes;
 - 150 frozen benchmark tasks;
-- four frozen main scaffold conditions;
+- five frozen conditions: no scaffold plus four scaffold implementations;
 - three paired repeats;
 - identical task/repeat seeds across scaffold conditions where supported.
 
 This yields:
 
 ```text
-11 models × 150 tasks × 4 scaffolds × 3 repeats = 19,800 runs
+11 models × 150 tasks × 5 conditions × 3 repeats = 24,750 runs
 ```
 
-The earlier ten-model/18,000-run plan is superseded. Approximately 50 GPU-hours per model, including prefill, remains a planning estimate rather than a measured result; applying it linearly gives approximately 550 GPU-hours for the eleven-model core.
+The five conditions are no_scaffold, sweagent_last5, aider_repomap,
+agentless_localization, and aider_chat_summary. The no-scaffold condition is
+the comparison line for estimating when a scaffold has diminishing or negative
+effect.
+
+The earlier ten-model/18,000-run and four-condition plans are superseded. Cost
+is not a research factor. Runtime, storage, and accelerator use are recorded as
+operational telemetry only.
 
 Technical smoke tests, the pilot, a partial model ladder, one model family, fewer tasks, or fewer scaffold conditions do not replace this minimum. They are validation stages used to make the minimum reliable.
 
@@ -49,7 +56,11 @@ Exact source revisions, inference profiles, quantized artifacts, tokenizer/templ
 
 ## Staged expansion plan
 
-The project is built as a complete minimum core followed by append-only expansion waves. The eventual research objective is a multidimensional capability landscape over model size/capability, scaffold mechanism, task complexity, and computational cost.
+The project is built as a complete minimum core followed by append-only
+expansion waves. The research objective is a multidimensional capability
+landscape over task type and complexity, model family, size and architecture,
+scaffold condition, and terminal outcome. Cost is deliberately excluded as an
+explanatory dimension.
 
 ### Wave 0: validation
 
@@ -57,7 +68,7 @@ Validate benchmark execution, upstream scaffold integration, official model prof
 
 ### Wave 1: minimum core
 
-Complete all 19,800 frozen core runs. This is the minimum successful result.
+Complete all 24,750 frozen core runs. This is the minimum successful result.
 
 ### Later expansion waves
 

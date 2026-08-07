@@ -9,6 +9,16 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEPLOYMENT_FIELDS = (
+    "context_size",
+    "gpu_layers",
+    "parallel",
+    "cache_type_k",
+    "cache_type_v",
+    "flash_attention",
+    "fit",
+    "fit_target_mib",
+)
 
 
 def resolve_path(value: str, registry_path: Path) -> Path:
@@ -40,6 +50,11 @@ def main() -> None:
     parser.add_argument("--registry", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument(
+        "--profile-lock",
+        default="experiments/model_profiles.lock.yml",
+        help="Frozen profile lock that must match every advertised artifact.",
+    )
+    parser.add_argument(
         "--model-id",
         action="append",
         default=[],
@@ -49,9 +64,19 @@ def main() -> None:
 
     source = Path(args.registry).expanduser().resolve()
     output = Path(args.output).expanduser().resolve()
+    profile_lock_path = Path(args.profile_lock).expanduser().resolve()
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or not isinstance(value.get("models"), dict):
         raise ValueError("Registry must contain a models mapping")
+    profile_lock = yaml.safe_load(
+        profile_lock_path.read_text(encoding="utf-8")
+    )
+    if (
+        not isinstance(profile_lock, dict)
+        or not isinstance(profile_lock.get("models"), dict)
+    ):
+        raise ValueError("Profile lock must contain a models mapping")
+    locked_profiles = profile_lock["models"]
 
     requested = selected_ids(args.model_id)
     verified: Dict[str, Dict[str, Any]] = {}
@@ -82,6 +107,57 @@ def main() -> None:
             continue
         entry["artifact"] = str(artifact)
         entry["sha256"] = actual
+
+        profile = locked_profiles.get(model_id)
+        if not isinstance(profile, dict):
+            failures.append("%s: absent from profile lock" % model_id)
+            continue
+        expected_artifact = str(
+            profile.get("quantized_artifact_sha256") or ""
+        ).lower()
+        profile_sha256 = str(profile.get("profile_sha256") or "").lower()
+        expected_revision = str(profile.get("model_revision") or "")
+        registry_revision = str(
+            entry.get("model_revision")
+            or entry.get("upstream_revision")
+            or ""
+        )
+        if not expected_artifact or expected_artifact.startswith("pending_"):
+            failures.append("%s: profile lock has no frozen GGUF hash" % model_id)
+            continue
+        if actual.lower() != expected_artifact:
+            failures.append("%s: artifact does not match profile lock" % model_id)
+            continue
+        if not profile_sha256 or profile_sha256.startswith("pending_"):
+            failures.append("%s: profile lock has no frozen profile hash" % model_id)
+            continue
+        if not expected_revision or registry_revision != expected_revision:
+            failures.append("%s: model revision does not match profile lock" % model_id)
+            continue
+        expected_deployment = profile.get("deployment_profile")
+        if (
+            profile.get("deployment_status") != "validated"
+            or not isinstance(expected_deployment, dict)
+            or expected_deployment.get("validation_status") != "validated"
+        ):
+            failures.append("%s: deployment profile is not validated" % model_id)
+            continue
+        locked_deployment = {
+            field: expected_deployment.get(field)
+            for field in DEPLOYMENT_FIELDS
+        }
+        registry_deployment = {
+            field: entry.get(field)
+            for field in DEPLOYMENT_FIELDS
+        }
+        if registry_deployment != locked_deployment:
+            failures.append(
+                "%s: registry deployment fields do not match profile lock"
+                % model_id
+            )
+            continue
+        entry["profile_sha256"] = profile_sha256
+        entry["model_revision"] = expected_revision
         verified[model_id] = entry
 
     missing_requested = requested.difference(verified)
@@ -98,6 +174,7 @@ def main() -> None:
     payload = {
         "schema_version": value.get("schema_version", 1),
         "source_registry": str(source),
+        "source_profile_lock": str(profile_lock_path),
         "models": verified,
     }
     temporary = output.with_suffix(output.suffix + ".tmp")

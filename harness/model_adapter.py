@@ -7,6 +7,82 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from harness.outcomes import ModelTerminalError
+
+
+_CONTEXT_MARKERS = (
+    "context size",
+    "context length",
+    "context window",
+    "exceeds the available context",
+    "exceed_context",
+    "n_ctx",
+    "too many tokens",
+    "prompt is too long",
+)
+_MEMORY_MARKERS = (
+    "out of memory",
+    "cuda oom",
+    "cuda error: out of memory",
+    "failed to allocate",
+    "memory allocation failed",
+    "kv cache allocation",
+)
+
+
+def _response_text(response: requests.Response) -> str:
+    try:
+        data = response.json()
+        if isinstance(data, dict):
+            value = data.get("error") or data.get("detail") or data.get("message")
+            if value:
+                return str(value)
+    except ValueError:
+        pass
+    return str(response.text or "")[:8000]
+
+
+def _raise_generation_error(response: requests.Response) -> None:
+    if response.status_code < 400:
+        return
+    message = _response_text(response)
+    normalized = message.lower()
+    details = {
+        "http_status": int(response.status_code),
+        "response": message[:8000],
+    }
+    if any(marker in normalized for marker in _CONTEXT_MARKERS):
+        raise ModelTerminalError(
+            "context_limit_exceeded",
+            message or "The request exceeded the deployed model context capacity",
+            stage="model_generation",
+            details=details,
+        )
+    if any(marker in normalized for marker in _MEMORY_MARKERS):
+        raise ModelTerminalError(
+            "capacity_oom",
+            message or "The deployed model ran out of memory",
+            stage="model_generation",
+            details=details,
+        )
+    if response.status_code in {400, 413, 422}:
+        raise ModelTerminalError(
+            "model_request_rejected",
+            message or "The model server rejected the generation request",
+            stage="model_generation",
+            details=details,
+        )
+    response.raise_for_status()
+
+
+def _invalid_model_response(message: str, details=None) -> ModelTerminalError:
+    return ModelTerminalError(
+        "invalid_model_response",
+        message,
+        stage="model_generation",
+        details=dict(details or {}),
+    )
+
 
 def _resolved_sampling_options(options: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve framework-neutral sampling controls without inventing defaults."""
@@ -86,9 +162,13 @@ class OllamaModel:
             json=payload,
             timeout=timeout or self.timeout,
         )
-        response.raise_for_status()
+        _raise_generation_error(response)
         data = response.json()
+        if data.get("error"):
+            raise _invalid_model_response(str(data["error"]))
         self._capture_metadata(data, options)
+        if data.get("response") is None:
+            raise _invalid_model_response("Ollama response has no generated content")
         return data["response"]
 
     def generate_messages(self, messages, seed=None, timeout=None):
@@ -104,13 +184,15 @@ class OllamaModel:
             json=payload,
             timeout=timeout or self.timeout,
         )
-        response.raise_for_status()
+        _raise_generation_error(response)
         data = response.json()
+        if data.get("error"):
+            raise _invalid_model_response(str(data["error"]))
         self._capture_metadata(data, options)
         message = data.get("message") or {}
         content = message.get("content")
         if content is None:
-            raise RuntimeError("Ollama chat response has no message content")
+            raise _invalid_model_response("Ollama chat response has no message content")
         return content
 
     def token_count(self, value: Any) -> int:
@@ -245,6 +327,7 @@ class OpenAICompatibleModel:
                 "min_p": "min_p",
                 "repetition_penalty": "repeat_penalty",
                 "repeat_penalty": "repeat_penalty",
+                "chat_template_kwargs": "chat_template_kwargs",
             }
             for source, target in llama_cpp_map.items():
                 if source in options:
@@ -259,15 +342,20 @@ class OpenAICompatibleModel:
             json=payload,
             timeout=timeout or self.timeout,
         )
-        response.raise_for_status()
+        _raise_generation_error(response)
         data = response.json()
         choices = data.get("choices") or []
         if not choices:
-            raise RuntimeError("OpenAI-compatible server returned no choices")
+            raise _invalid_model_response(
+                "OpenAI-compatible server returned no choices",
+                {"response_keys": sorted(data)},
+            )
         message = choices[0].get("message") or {}
         content = message.get("content")
         if content is None:
-            raise RuntimeError("OpenAI-compatible response has no message content")
+            raise _invalid_model_response(
+                "OpenAI-compatible response has no message content"
+            )
 
         self.last_generation_metadata = {
             "id": data.get("id"),

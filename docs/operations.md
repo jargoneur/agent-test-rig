@@ -78,30 +78,34 @@ A CUDA build requires an installed toolkit containing `nvcc`. The version shown
 by `nvidia-smi` describes driver compatibility and does not prove that the
 compiler is installed.
 
-## 2. Provision the smoke model
+## 2. Provision and validate a locked model
 
-Resolve and review the exact Hugging Face revision:
+All model IDs, revisions, Q8_0 deployment fields, generation settings and native
+context sizes come from experiments/model_profiles.lock.yml. Do not override
+them manually. Provision one model into the Plato single-artifact slot:
 
-```bash
-source .venv/bin/activate
-python scripts/resolve_model_revision.py Qwen/Qwen3.5-0.8B
-```
+    source .venv/bin/activate
+    python scripts/provision_locked_model.py qwen3_5_0_8b
 
-Use the printed 40-character revision:
+This downloads the exact frozen checkpoint, converts it with pinned llama.cpp,
+quantizes it to Q8_0, records the immutable source-weight manifest and writes a
+SHA-256 registry entry. The source snapshot and F16 intermediate are removed
+after successful provisioning unless their keep flags were explicitly used.
 
-```bash
-python scripts/provision_gguf.py \
-  --profile-key qwen3_5_0_8b \
-  --model-id Qwen/Qwen3.5-0.8B \
-  --revision REPLACE_WITH_RESOLVED_40_CHARACTER_SHA \
-  --context-size 32768
-```
+With Plato otherwise stopped, select an idle GPU by exact UUID and run the
+full native-context prefill validation:
 
-This downloads the exact checkpoint, converts it with pinned llama.cpp,
-quantizes it to Q8_0, records provenance and writes a SHA-256 registry entry.
-The source snapshot and F16 intermediate are removed after successful
-provisioning. The smoke deployment does not freeze the final scientific profile
-by itself.
+    nvidia-smi -L
+    python scripts/validate_model_profile.py qwen3_5_0_8b --gpu-uuid GPU-REPLACE-WITH-UUID
+
+    python scripts/finalize_model_profile.py qwen3_5_0_8b --validation-evidence model_artifacts/qwen3_5_0_8b/validation-evidence.json
+
+Validation refuses a busy GPU, validates the chat template, evaluates
+native_context_size - 1 tokens without truncation, samples peak VRAM and
+requires the frozen safety margin. Failed evidence is retained as a usable
+deployment-boundary result, but it does not open the launch gate. Repeat this
+process for all eleven profile keys, copying validated artifacts and their
+registry and provenance records between hosts when necessary.
 
 Before starting Plato, validate the single-model slot:
 
@@ -134,7 +138,7 @@ python scripts/preflight.py \
   --gpu GPU-REPLACE-WITH-UUID
 ```
 
-Preflight verifies upstream commits, four real scaffold imports, the isolated
+Preflight verifies upstream commits, all five condition imports, the isolated
 evaluator, exactly 150 cached tasks, artifact SHA-256, llama-server startup and
 clean model shutdown on the selected GPU.
 
@@ -149,11 +153,12 @@ python plan_experiment.py \
 Expected dimensions:
 
 ```text
-8 tasks × 1 model × 4 real scaffolds × 1 repeat = 32 runs
+8 tasks × 1 model × 5 conditions × 1 repeat = 40 runs
 ```
 
 The scheduler groups these into eight paired blocks. Every block contains:
 
+- no_scaffold
 - `sweagent_last5`
 - `aider_repomap`
 - `agentless_localization`
@@ -167,11 +172,13 @@ Use a separate scheduler database for the smoke:
 export SCHEDULER_DB=scheduler/contextbench_distributed_smoke.sqlite3
 export MODEL_IDS=qwen3_5_0_8b
 export PLATO_WORKERS=1
+export PLATO_GPU_UUIDS=GPU-REPLACE-WITH-UUID
 bash scripts/start_plato.sh jobs/contextbench_distributed_smoke.jsonl
 ```
 
 `MODEL_IDS` must be exactly one model ID on Plato. `PLATO_WORKERS` defaults to
-`1`. Increase it only after the one-GPU smoke has passed and the operator
+1. PLATO_GPU_UUIDS must contain the same number of exact, idle GPU UUIDs.
+Increase the worker count only after the one-GPU smoke has passed and the operator
 deliberately chooses to use more GPUs. Multiple Plato workers may load the same
 selected GGUF on different GPUs; they still satisfy the one-artifact storage
 rule.
@@ -253,8 +260,9 @@ python scripts/plato_model_slot.py \
   --remove-other-artifacts
 
 export MODEL_IDS=qwen3_5_2b
+export PLATO_GPU_UUIDS=GPU-REPLACE-WITH-UUID
 export SCHEDULER_DB=scheduler/contextbench_core.sqlite3
-bash scripts/start_plato.sh jobs/contextbench_core.jsonl
+bash scripts/start_plato.sh jobs/contextbench_scaffold_boundaries_v1.jsonl
 ```
 
 The same scheduler database can continue across model changes. Completed blocks
@@ -357,10 +365,45 @@ families:
 
 ```text
 6 Qwen3.5 + 5 Gemma 4 = 11 models
-11 × 150 tasks × 4 scaffolds × 3 repeats = 19,800 runs
+11 × 150 tasks × 5 conditions × 3 repeats = 24,750 runs
 ```
 
-The complete manifest remains blocked until exact revisions, recommended
-inference profiles, artifact/tokenizer/template hashes and measured one-GPU
-memory envelopes are frozen for all eleven checkpoints. These scientific freeze
-gates do not block the one-model infrastructure smoke.
+The conditions are the no-scaffold line plus the four pinned scaffold
+implementations. The complete manifest remains blocked until all eleven
+artifact hashes, native-context deployment validations, and distributed
+recovery evidence satisfy scripts/launch_gate.py. These scientific freeze gates
+do not block a separately labelled infrastructure smoke.
+
+After all eleven profiles have been finalized, create a commit so the harness is
+clean and exact. Then generate machine-checked recovery evidence, open the
+profile gate, and commit the resulting lock update:
+
+    git status --short
+    python scripts/run_distributed_recovery_validation.py
+    python scripts/approve_model_profiles.py --distributed-recovery-evidence model_artifacts/validation/distributed-recovery.json
+    git add experiments/model_profiles.lock.yml
+    git commit -m Open_ContextBench_experiment_launch_gate
+
+Only after that approval commit should the final manifest be generated and
+checked. The manifest is deliberately generated, ignored state tied to the
+current clean commit:
+
+    python plan_experiment.py --config experiments/contextbench_core.yml
+    python scripts/launch_gate.py --config experiments/contextbench_core.yml
+
+Expected output is 24,750 jobs in 4,950 five-condition paired blocks and a gate
+report with ok: true. A manual stop, resource yield or pause does not spend the
+two-attempt infrastructure retry allowance; an interrupted block discards
+all partial condition records and restarts all five conditions together.
+
+The scientific launch remains an explicit operator action. Select exactly one
+validated artifact and one or more idle GPU UUIDs, then start the core manifest:
+
+    export MODEL_IDS=qwen3_5_0_8b
+    export PLATO_WORKERS=1
+    export PLATO_GPU_UUIDS=GPU-REPLACE-WITH-UUID
+    export SCHEDULER_DB=scheduler/contextbench_core.sqlite3
+    bash scripts/start_plato.sh jobs/contextbench_scaffold_boundaries_v1.jsonl
+
+Do not run that command until the operator has reviewed the green launch-gate
+report and explicitly decided to begin the large experiment.

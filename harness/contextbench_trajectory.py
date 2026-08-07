@@ -108,6 +108,15 @@ def build_contextbench_trajectory(
     }
     job = dict(job or {})
     model = dict(job.get("model") or {})
+    model_patch = str(model_patch or "")
+    model_patch_present = bool(model_patch.strip())
+    # ContextBench falls back to the gold patch when this field is empty.
+    # A non-diff sentinel parses as zero edits and preserves no-patch outcomes.
+    evaluator_patch = (
+        model_patch
+        if model_patch_present
+        else "agent-rig-no-model-patch\n"
+    )
     return {
         "instance_id": task["instance_id"],
         "original_inst_id": task.get("original_inst_id", ""),
@@ -117,8 +126,9 @@ def build_contextbench_trajectory(
             "pred_spans": final_spans,
             "pred_symbols": {},
         },
-        "model_patch": model_patch,
+        "model_patch": evaluator_patch,
         "agent_rig": {
+            "model_patch_present": model_patch_present,
             "task_id": task.get("id"),
             "bench": task.get("bench"),
             "repo": task.get("repo"),

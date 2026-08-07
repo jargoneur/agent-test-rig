@@ -86,6 +86,23 @@ def test_contextbench_trajectory_preserves_exact_read_and_search_spans():
         {"start": 10, "end": 20},
         {"start": 30, "end": 30},
     ]
+    assert trajectory["agent_rig"]["model_patch_present"] is True
+
+
+def test_contextbench_trajectory_never_triggers_gold_patch_fallback():
+    task = {
+        "id": "contextbench::example",
+        "instance_id": "example",
+        "original_inst_id": "org__repo-1",
+        "bench": "Verified",
+        "repo": "org/repo",
+        "base_commit": "b" * 40,
+    }
+
+    trajectory = build_contextbench_trajectory(task, {"history": []}, "")
+
+    assert trajectory["model_patch"] == "agent-rig-no-model-patch\n"
+    assert trajectory["agent_rig"]["model_patch_present"] is False
 
 
 def test_llama_cpp_registry_builds_a_single_gpu_server_command(tmp_path):

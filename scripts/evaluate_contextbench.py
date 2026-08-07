@@ -6,9 +6,14 @@ import json
 import os
 import re
 import subprocess
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
+import sys
 from typing import Any, Dict, Tuple
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
 
 from harness.contextbench_trajectory import build_contextbench_trajectory
 from harness.upstreams import upstream_path
@@ -45,6 +50,34 @@ def condition_key(record: Dict[str, Any]) -> Tuple[str, str, int]:
     )
 
 
+def outcome_row(
+    record: Dict[str, Any],
+    trajectory: Dict[str, Any],
+) -> Dict[str, Any]:
+    outcome = dict(record.get("outcome") or {})
+    return {
+        "instance_id": trajectory["instance_id"],
+        "run_id": record.get("run_id"),
+        "outcome": outcome,
+        "outcome_kind": str(outcome.get("kind") or "missing_outcome_metadata"),
+        "usable_result": bool(outcome.get("usable_result", False)),
+        "terminal_error": record.get("terminal_error"),
+        "model_patch_present": bool(
+            (trajectory.get("agent_rig") or {}).get("model_patch_present")
+        ),
+    }
+
+
+def read_jsonl(path: Path):
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Collect completed runs and evaluate each ContextBench condition."
@@ -76,6 +109,7 @@ def main() -> None:
         )
 
     groups = defaultdict(dict)
+    outcome_groups = defaultdict(dict)
     for root_value in args.roots:
         root = Path(root_value)
         candidates = root.rglob("run_*.json") if root.is_dir() else [root]
@@ -107,6 +141,14 @@ def main() -> None:
                     % (instance_id, key)
                 )
             groups[key][instance_id] = trajectory
+            row = outcome_row(record, trajectory)
+            existing_outcome = outcome_groups[key].get(instance_id)
+            if existing_outcome is not None and existing_outcome != row:
+                raise RuntimeError(
+                    "Conflicting completed outcomes for %s in %s"
+                    % (instance_id, key)
+                )
+            outcome_groups[key][instance_id] = row
 
     if not groups:
         raise RuntimeError("No completed ContextBench run records found")
@@ -128,6 +170,7 @@ def main() -> None:
         stem = safe_name(condition)
         pred_path = output_dir / (stem + ".predictions.jsonl")
         metrics_path = output_dir / (stem + ".metrics.jsonl")
+        outcomes_path = output_dir / (stem + ".outcomes.jsonl")
         with pred_path.open("w", encoding="utf-8") as handle:
             for instance_id in sorted(by_instance):
                 handle.write(
@@ -137,6 +180,18 @@ def main() -> None:
                         sort_keys=True,
                     )
                     + "\n"
+                )
+
+        by_outcome = outcome_groups[(model_id, scaffold, repeat)]
+        with outcomes_path.open("w", encoding="utf-8") as handle:
+            for instance_id in sorted(by_outcome):
+                handle.write(
+                    json.dumps(
+                        by_outcome[instance_id],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    + chr(10)
                 )
 
         command = [
@@ -155,13 +210,32 @@ def main() -> None:
         print("Condition:", condition, "instances=", len(by_instance))
         print("+", " ".join(command), flush=True)
         subprocess.run(command, cwd=contextbench, env=environment, check=True)
+        metric_rows = read_jsonl(metrics_path)
+        outcome_counts = Counter(
+            row["outcome_kind"] for row in by_outcome.values()
+        )
+        evaluator_errors = Counter(
+            str(row["error"])
+            for row in metric_rows
+            if row.get("error")
+        )
         summary.append(
             {
                 "model_id": model_id,
                 "scaffold": scaffold,
                 "repeat": repeat,
                 "instances": len(by_instance),
+                "usable_outcomes": sum(
+                    1
+                    for row in by_outcome.values()
+                    if row["usable_result"]
+                ),
+                "outcome_counts": dict(sorted(outcome_counts.items())),
+                "evaluator_error_counts": dict(
+                    sorted(evaluator_errors.items())
+                ),
                 "predictions": str(pred_path),
+                "outcomes": str(outcomes_path),
                 "metrics": str(metrics_path),
             }
         )

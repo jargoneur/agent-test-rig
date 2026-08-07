@@ -127,13 +127,37 @@ def test_manifest_extension_is_idempotent():
         max_steps=8,
         base_seed=1,
         generation_options={},
-        experiment_id="expanded",
+        experiment_id="first",
         harness_commit="abc123",
     )
 
     merged = merge_jobs(first, second)
     assert len(merged) == 2
     assert merged[0]["experiment_id"] == "first"
+
+
+def test_experiment_id_separates_otherwise_identical_runs():
+    arguments = {
+        "tasks": ["task-a"],
+        "models": ["model-a"],
+        "scaffolds": ["no_scaffold"],
+        "repeats": 1,
+        "max_steps": 8,
+        "base_seed": 1,
+        "generation_options": {},
+        "harness_commit": "abc123",
+    }
+    first = build_jobs(
+        experiment_id="first",
+        **arguments,
+    )
+    second = build_jobs(
+        experiment_id="second",
+        **arguments,
+    )
+
+    assert first[0]["run_id"] != second[0]["run_id"]
+    assert first[0]["block_id"] != second[0]["block_id"]
 
 
 def test_shards_keep_whole_blocks_together():

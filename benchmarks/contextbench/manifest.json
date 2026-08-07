@@ -1,0 +1,129 @@
+{
+  "contextbench_commit": "1436c28a8eb95496da4ea69ad458b9f8a8eb7d61",
+  "contextbench_repository": "EuniAI/ContextBench",
+  "gold_sha256": "a13f86ec9962c56dc3a697c790ce7bfb11185dd29b2e2cf9410e4ebbe2e17b6b",
+  "huggingface_dataset": "Contextbench/ContextBench",
+  "huggingface_dataset_revision": "c2855792b006af41c67202d33883fb9d46362853",
+  "schema_version": 2,
+  "scientific_scope": {
+    "solution_scope_is_descriptive_not_a_task_type_substitute": true,
+    "source_task_type_is_fixed": false,
+    "source_task_types": {
+      "evolution_feature": 36,
+      "evolution_refactor": 2,
+      "maintenance_bugfix": 1098
+    },
+    "task_type_boundary_claims_allowed": true,
+    "task_type_limitations": "no source-labelled test-only or documentation-only category",
+    "task_type_sampling": "all feature and refactor tasks are included; bug-fix tasks are representative fills"
+  },
+  "selection": {
+    "complexity_bins": "equal_population_tertiles_over_all_1136_rows",
+    "complexity_metrics": [
+      "patch_files",
+      "patch_hunks",
+      "patch_changed_lines",
+      "test_changed_lines",
+      "gold_context_files",
+      "gold_context_characters",
+      "problem_characters"
+    ],
+    "complexity_rubric": "contextbench_complexity_v1",
+    "count": 150,
+    "distributions": {
+      "complexity_bin": {
+        "easy": 50,
+        "hard": 50,
+        "intermediate": 50
+      },
+      "language": {
+        "c": 8,
+        "cpp": 7,
+        "go": 12,
+        "java": 6,
+        "javascript": 20,
+        "python": 67,
+        "rust": 7,
+        "typescript": 23
+      },
+      "repository": {
+        "BurntSushi/ripgrep": 1,
+        "NodeBB/NodeBB": 1,
+        "ansible/ansible": 3,
+        "anuraghazra/github": 2,
+        "astropy/astropy": 3,
+        "axios/axios": 1,
+        "clap-rs/clap": 3,
+        "cli/cli": 5,
+        "coder/code-server": 1,
+        "darkreader/darkreader": 1,
+        "django/django": 5,
+        "elastic/logstash": 3,
+        "element-hq/element-web": 2,
+        "expressjs/express": 2,
+        "facebook/zstd": 3,
+        "fasterxml/jackson": 1,
+        "flipt-io/flipt": 1,
+        "fmtlib/fmt": 2,
+        "googlecontainertools/jib": 2,
+        "grpc/grpc": 3,
+        "huggingface/transformers": 16,
+        "iamkun/dayjs": 4,
+        "internetarchive/openlibrary": 2,
+        "jqlang/jq": 2,
+        "keras-team/keras": 2,
+        "langchain-ai/langchain": 3,
+        "matplotlib/matplotlib": 4,
+        "microsoft/vscode": 1,
+        "mui/material": 1,
+        "mui/material-ui": 17,
+        "mwaskom/seaborn": 1,
+        "navidrome/navidrome": 1,
+        "nlohmann/json": 3,
+        "nushell/nushell": 1,
+        "pallets/flask": 1,
+        "ponylang/ponyc": 3,
+        "psf/requests": 2,
+        "pydata/xarray": 4,
+        "pylint-dev/pylint": 3,
+        "pytest-dev/pytest": 4,
+        "qutebrowser/qutebrowser": 1,
+        "scikit-learn/scikit-learn": 4,
+        "serverless/serverless": 1,
+        "simdjson/simdjson": 2,
+        "sphinx-doc/sphinx": 4,
+        "sveltejs/svelte": 7,
+        "sympy/sympy": 4,
+        "tailwindlabs/tailwindcss": 1,
+        "tokio-rs/tokio": 1,
+        "tokio-rs/tracing": 1,
+        "vuejs/core": 1,
+        "yt-dlp/yt-dlp": 1,
+        "zeromicro/go": 2
+      },
+      "solution_scope": {
+        "cross_module": 40,
+        "documentation_configuration": 20,
+        "localized_code": 90
+      },
+      "source": {
+        "Multi": 56,
+        "Poly": 44,
+        "Pro": 11,
+        "Verified": 39
+      },
+      "source_declared_task_type": {
+        "evolution_feature": 36,
+        "evolution_refactor": 2,
+        "maintenance_bugfix": 112
+      }
+    },
+    "method": "rare_task_type_census_plus_representative_greedy_v1",
+    "seed": 20260807
+  },
+  "selection_sha256": "3761086a79947a5e4339f7fff25fbd298ac6b97a4cc1d7b892919ab34d79b191",
+  "source_file": "data/full.parquet",
+  "source_file_sha256": "2f56535bdc73eb8a68bf4ebb49789d8e9cd4f219ea60df6290b85278aee61ca8",
+  "source_row_count": 1136,
+  "tasks_sha256": "f8f27ea45577bef9f232fe09c56b53276e6226130ff3d92c4cd0b7a58c1fe9bd"
+}

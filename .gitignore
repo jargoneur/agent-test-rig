@@ -5,6 +5,12 @@ __pycache__/
 .venv/
 
 # Experiment outputs
+.cache/
+logs/
+run/
+results/
+jobs/
+scheduler/
 logs/*.jsonl
 logs/*.manifest.json
 results/batch_*.csv
@@ -32,3 +38,7 @@ model_metadata/
 .vscode/
 .idea/
 .DS_Store
+*:Zone.Identifier
+
+# Local agent handoffs are operational context, not experiment source.
+docs/CONTEXT_START_AGENT_TEST_RIG_*.md

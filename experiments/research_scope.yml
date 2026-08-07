@@ -1,6 +1,7 @@
 schema_version: 3
 frozen_at: "2026-08-06"
 policy_document: docs/research_scope_and_resource_policy.md
+analysis_document: docs/analysis_protocol.md
 
 minimum_successful_result:
   status: required
@@ -12,14 +13,12 @@ minimum_successful_result:
   benchmark:
     name: ContextBench
     frozen_task_count: 150
-  main_scaffold_count: 4
+  main_scaffold_count: 5
   repeats: 3
-  expected_run_count: 19800
-  expected_run_count_formula: "11 * 150 * 4 * 3"
-  estimated_gpu_hours_per_model: 50
-  estimated_gpu_hours_total: 550
-  estimate_status: planning_only_not_measured
-  includes_prefill_cost: true
+  expected_run_count: 24750
+  expected_run_count_formula: "11 * 150 * 5 * 3"
+  cost_is_research_factor: false
+  runtime_and_resource_telemetry: operational_only
   pilot_counts_as_result: false
   partial_family_counts_as_result: false
   reduced_task_or_scaffold_set_counts_as_result: false
@@ -50,7 +49,7 @@ execution_waves:
       - cooperative_pause_validation
   - id: minimum_core
     research_result: true
-    purpose: complete_all_19800_frozen_core_runs
+    purpose: complete_all_24750_frozen_core_runs
   - id: optional_expansion
     research_result: supplementary
     append_only: true

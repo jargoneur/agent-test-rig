@@ -6,9 +6,14 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+import sys
 from typing import Any, Dict, Iterable, List
 
 from datasets import Dataset, load_dataset
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
 
 from harness.upstreams import PROJECT_ROOT, component_spec, upstream_path
 

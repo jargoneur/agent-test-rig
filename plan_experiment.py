@@ -103,6 +103,9 @@ def main():
         experiment_id=str(experiment_id),
         wave_size=int(config.get("wave_size", 25)),
         default_backend=str(config.get("default_backend", "ollama")),
+        max_infrastructure_retries=int(
+            config.get("max_infrastructure_retries", 2)
+        ),
     )
 
     output_path = Path(output)

@@ -104,6 +104,24 @@ class LlamaCppServerManager:
             )
         return verified
 
+    def model_profiles(self) -> Dict[str, Dict[str, Any]]:
+        profiles: Dict[str, Dict[str, Any]] = {}
+        for model_id in self.model_ids(verify=True):
+            entry = self._entry(model_id)
+            profiles[model_id] = {
+                "profile_sha256": entry.get("profile_sha256"),
+                "quantized_artifact_sha256": entry.get("sha256"),
+                "model_revision": (
+                    entry.get("model_revision")
+                    or entry.get("upstream_revision")
+                ),
+                "context_size": entry.get("context_size"),
+                "cache_type_k": entry.get("cache_type_k"),
+                "cache_type_v": entry.get("cache_type_v"),
+                "gpu_layers": entry.get("gpu_layers"),
+            }
+        return profiles
+
     def _entry(self, model_id: str) -> Dict[str, Any]:
         cached = self._verified_entries.get(model_id)
         if cached is not None:

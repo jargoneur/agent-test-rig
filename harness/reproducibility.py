@@ -75,6 +75,41 @@ def git_metadata() -> dict:
     }
 
 
+def experiment_source_sha256() -> str:
+    """Hash every tracked file except the profile lock changed by gate approval."""
+    excluded = {"experiments/model_profiles.lock.yml"}
+    result = subprocess.run(
+        ["git", "ls-files", "-s", "-z"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    entries = []
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        metadata, raw_path = raw.split(b"	", 1)
+        mode, object_id, _stage = metadata.decode("ascii").split()
+        entries.append((raw_path.decode("utf-8"), mode, object_id))
+    digest = hashlib.sha256()
+    for relative, mode, object_id in sorted(entries):
+        if relative in excluded:
+            continue
+        path = PROJECT_ROOT / relative
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        if mode == "160000":
+            digest.update(b"gitlink\0")
+            digest.update(object_id.encode("ascii"))
+        elif path.is_file():
+            digest.update(path.read_bytes())
+        else:
+            raise FileNotFoundError("Tracked source is missing: %s" % relative)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def environment_metadata() -> dict:
     return {
         "python_version": sys.version,

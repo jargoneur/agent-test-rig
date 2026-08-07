@@ -14,7 +14,7 @@ The study does **not** force one universal temperature or sampling profile acros
 For a given model artifact, the exact same locked inference profile is used across:
 
 - all benchmark tasks;
-- all four scaffold conditions;
+- all five conditions, including no_scaffold;
 - all repeats;
 - all worker machines and inference backends.
 

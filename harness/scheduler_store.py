@@ -39,6 +39,9 @@ class SchedulerStore:
                     experiment_id TEXT,
                     wave INTEGER NOT NULL,
                     model_id TEXT NOT NULL,
+                    profile_sha256 TEXT,
+                    artifact_sha256 TEXT,
+                    harness_commit TEXT NOT NULL DEFAULT '',
                     resource_class TEXT,
                     payload_json TEXT NOT NULL,
                     state TEXT NOT NULL DEFAULT 'pending',
@@ -47,7 +50,9 @@ class SchedulerStore:
                     lease_token TEXT,
                     lease_expires_at REAL,
                     attempts INTEGER NOT NULL DEFAULT 0,
+                    infrastructure_failures INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT,
+                    last_failure_kind TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -74,6 +79,39 @@ class SchedulerStore:
                 """
             )
 
+            self._ensure_column(connection, "blocks", "profile_sha256", "TEXT")
+            self._ensure_column(connection, "blocks", "artifact_sha256", "TEXT")
+            self._ensure_column(
+                connection,
+                "blocks",
+                "harness_commit",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            self._ensure_column(
+                connection,
+                "blocks",
+                "infrastructure_failures",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(connection, "blocks", "last_failure_kind", "TEXT")
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection,
+        table: str,
+        column: str,
+        declaration: str,
+    ) -> None:
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(%s)" % table)
+        }
+        if column not in columns:
+            connection.execute(
+                "ALTER TABLE %s ADD COLUMN %s %s"
+                % (table, column, declaration)
+            )
+
     def import_manifest(self, manifest_path: str) -> Dict[str, int]:
         jobs = load_jobs(manifest_path)
         blocks = group_jobs_by_block(jobs)
@@ -84,6 +122,10 @@ class SchedulerStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 for block in blocks:
+                    model = dict(block.get("model") or {})
+                    profile_sha256 = model.get("profile_sha256")
+                    artifact_sha256 = model.get("quantized_artifact_sha256")
+                    harness_commit = str(block.get("harness_commit") or "")
                     payload = canonical_json(block)
                     existing = connection.execute(
                         "SELECT payload_json FROM blocks WHERE block_id = ?",
@@ -94,15 +136,19 @@ class SchedulerStore:
                             """
                             INSERT INTO blocks (
                                 block_id, experiment_id, wave, model_id,
+                                profile_sha256, artifact_sha256, harness_commit,
                                 resource_class, payload_json, state,
                                 created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
                             """,
                             (
                                 block["block_id"],
                                 block.get("experiment_id"),
                                 int(block.get("wave", 0)),
                                 block["model_id"],
+                                profile_sha256,
+                                artifact_sha256,
+                                harness_commit,
                                 block.get("resource_class"),
                                 payload,
                                 now,
@@ -155,18 +201,85 @@ class SchedulerStore:
                 ),
             )
 
+    @staticmethod
+    def _max_infrastructure_retries(block: Dict[str, Any]) -> int:
+        recovery = dict(block.get("recovery") or {})
+        return max(0, int(recovery.get("max_infrastructure_retries", 2)))
+
+    @staticmethod
+    def _validate_completed_results(
+        block: Dict[str, Any],
+        results: Sequence[Dict[str, Any]],
+    ) -> None:
+        expected_jobs = {
+            str(job["run_id"]): job for job in block.get("jobs", [])
+        }
+        received_ids = [str(record.get("run_id") or "") for record in results]
+        if (
+            len(received_ids) != len(expected_jobs)
+            or len(set(received_ids)) != len(received_ids)
+            or set(received_ids) != set(expected_jobs)
+        ):
+            raise ValueError(
+                "Completed block must contain exactly one result for every expected run ID"
+            )
+
+        for record in results:
+            run_id = str(record["run_id"])
+            if record.get("status") != "completed":
+                raise ValueError(
+                    "Result %s is not a completed terminal result" % run_id
+                )
+            outcome = record.get("outcome")
+            if (
+                not isinstance(outcome, dict)
+                or outcome.get("usable_result") is not True
+            ):
+                raise ValueError(
+                    "Result %s lacks a usable terminal outcome" % run_id
+                )
+            submitted_job = record.get("job")
+            if not isinstance(submitted_job, dict) or canonical_json(
+                submitted_job
+            ) != canonical_json(expected_jobs[run_id]):
+                raise ValueError(
+                    "Result %s does not match its scheduled job" % run_id
+                )
+
     def _release_expired(self, connection: sqlite3.Connection) -> int:
         now_epoch = time.time()
-        cursor = connection.execute(
+        rows = connection.execute(
             """
-            UPDATE blocks
-            SET state = 'pending', lease_owner = NULL, lease_token = NULL,
-                lease_expires_at = NULL, updated_at = ?
+            SELECT block_id, payload_json, infrastructure_failures
+            FROM blocks
             WHERE state = 'leased' AND lease_expires_at < ?
             """,
-            (utc_now_iso(), now_epoch),
-        )
-        return cursor.rowcount
+            (now_epoch,),
+        ).fetchall()
+        now_text = utc_now_iso()
+        for row in rows:
+            block = json.loads(row["payload_json"])
+            failures = int(row["infrastructure_failures"]) + 1
+            maximum = self._max_infrastructure_retries(block)
+            target_state = "pending" if failures <= maximum else "failed"
+            connection.execute(
+                """
+                UPDATE blocks
+                SET state = ?, lease_owner = NULL, lease_token = NULL,
+                    lease_expires_at = NULL, infrastructure_failures = ?,
+                    last_error = ?, last_failure_kind = ?, updated_at = ?
+                WHERE block_id = ? AND state = 'leased'
+                """,
+                (
+                    target_state,
+                    failures,
+                    "scheduler lease expired",
+                    "lease_expired",
+                    now_text,
+                    row["block_id"],
+                ),
+            )
+        return len(rows)
 
     def claim_block(
         self,
@@ -264,6 +377,8 @@ class SchedulerStore:
         return {
             "lease_token": token,
             "lease_expires_at": lease_expires_at,
+            "attempt": int(row["attempts"]) + 1,
+            "infrastructure_failures": int(row["infrastructure_failures"]),
             "block": block,
         }
 
@@ -326,12 +441,7 @@ class SchedulerStore:
                 if row is None:
                     raise ValueError("Lease is no longer valid")
                 block = json.loads(row["payload_json"])
-                expected = {job["run_id"] for job in block["jobs"]}
-                received = {record.get("run_id") for record in results}
-                if received != expected:
-                    raise ValueError(
-                        "Completed block must contain exactly the expected run IDs"
-                    )
+                self._validate_completed_results(block, results)
                 for record in results:
                     connection.execute(
                         """
@@ -371,28 +481,62 @@ class SchedulerStore:
         lease_token: str,
         error: str,
         retry: bool = True,
-    ) -> None:
-        target_state = "pending" if retry else "failed"
+        failure_kind: str = "infrastructure",
+    ) -> Dict[str, Any]:
+        normalized_kind = str(failure_kind or "infrastructure")
+        operator_release = normalized_kind in {"operator_stop", "resource_yield"}
         with self._lock, self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE blocks
-                SET state = ?, lease_owner = NULL, lease_token = NULL,
-                    lease_expires_at = NULL, last_error = ?, updated_at = ?
-                WHERE block_id = ? AND state = 'leased'
-                  AND lease_owner = ? AND lease_token = ?
-                """,
-                (
-                    target_state,
-                    error[-8000:],
-                    utc_now_iso(),
-                    block_id,
-                    worker_id,
-                    lease_token,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("Lease is no longer valid")
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    """
+                    SELECT payload_json, infrastructure_failures
+                    FROM blocks
+                    WHERE block_id = ? AND state = 'leased'
+                      AND lease_owner = ? AND lease_token = ?
+                    """,
+                    (block_id, worker_id, lease_token),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("Lease is no longer valid")
+
+                block = json.loads(row["payload_json"])
+                failures = int(row["infrastructure_failures"])
+                if not operator_release:
+                    failures += 1
+                maximum = self._max_infrastructure_retries(block)
+                target_state = (
+                    "pending"
+                    if retry and (operator_release or failures <= maximum)
+                    else "failed"
+                )
+                connection.execute(
+                    """
+                    UPDATE blocks
+                    SET state = ?, lease_owner = NULL, lease_token = NULL,
+                        lease_expires_at = NULL, infrastructure_failures = ?,
+                        last_error = ?, last_failure_kind = ?, updated_at = ?
+                    WHERE block_id = ?
+                    """,
+                    (
+                        target_state,
+                        failures,
+                        error[-8000:],
+                        normalized_kind,
+                        utc_now_iso(),
+                        block_id,
+                    ),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return {
+            "state": target_state,
+            "infrastructure_failures": failures,
+            "max_infrastructure_retries": maximum,
+            "failure_kind": normalized_kind,
+        }
 
     def status(self) -> Dict[str, Any]:
         with self._lock, self._connect() as connection:

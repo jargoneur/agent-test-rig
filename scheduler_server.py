@@ -188,14 +188,15 @@ class SchedulerHandler(BaseHTTPRequestHandler):
                 )
                 result = {"status": "completed"}
             elif path == "/fail":
-                self.server.store.fail_block(
+                failure = self.server.store.fail_block(
                     payload["worker_id"],
                     payload["block_id"],
                     payload["lease_token"],
                     str(payload.get("error", "unknown error")),
                     bool(payload.get("retry", True)),
+                    str(payload.get("failure_kind", "infrastructure")),
                 )
-                result = {"status": "released"}
+                result = {"status": "released", **failure}
             elif path == "/pause":
                 result = self.server.store.set_paused(
                     True, str(payload.get("reason") or "operator pause")
@@ -226,11 +227,23 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--token", default=os.environ.get("SCHEDULER_TOKEN"))
+    parser.add_argument(
+        "--token-file",
+        help="Read the scheduler bearer token from a protected file.",
+    )
     parser.add_argument("--export-results")
     parser.add_argument("--backup-directory", default="scheduler/backups")
     parser.add_argument("--backup-interval-seconds", type=int, default=900)
     parser.add_argument("--backup-retain", type=int, default=96)
     args = parser.parse_args()
+    scheduler_token = args.token
+    if args.token_file:
+        if scheduler_token:
+            raise ValueError("Use either --token/SCHEDULER_TOKEN or --token-file")
+        scheduler_token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        if not scheduler_token:
+            raise ValueError("Scheduler token file is empty")
+
 
     store = DistributedSchedulerStore(args.database)
     integrity = store.integrity_check(thorough=True)
@@ -255,7 +268,7 @@ def main() -> None:
 
     server = SchedulerHTTPServer((args.host, args.port), SchedulerHandler)
     server.store = store
-    server.scheduler_token = args.token
+    server.scheduler_token = scheduler_token
     server.backup_manager = backup_manager
     print("Scheduler listening on http://%s:%d" % (args.host, args.port))
     print("Database:", args.database)

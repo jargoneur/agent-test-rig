@@ -22,6 +22,11 @@ from harness.experiment_jobs import (
 )
 from harness.logger import JsonlLogger
 from harness.model_adapter import create_model
+from harness.outcomes import (
+    TerminalRunError,
+    completed_outcome,
+    error_outcome,
+)
 from harness.reproducibility import (
     environment_metadata,
     git_metadata,
@@ -79,16 +84,6 @@ def execute_job(
         options=job["generation_options"],
     )
     model_metadata = model.runtime_metadata()
-    scaffold_options = dict(job.get("scaffold_options") or {})
-    scaffold_options["_run_seed"] = int(job["run_seed"])
-    scaffold_options["_resource_policy"] = resource_policy
-    scaffold = load_scaffold(
-        job["scaffold"],
-        model=model,
-        task=task,
-        options=scaffold_options,
-    )
-
     workspace_name = safe_name(run_id)
     workspace_path = prepare_workspace(task, workspace_name)
     tools = FileTools(
@@ -99,21 +94,57 @@ def execute_job(
     log_path = results_root / "logs" / (run_id + ".jsonl")
     logger = JsonlLogger(str(log_path))
     started_at = utc_now_iso()
-
-    agent = SimpleAgent(
+    scaffold_options = dict(job.get("scaffold_options") or {})
+    scaffold_options["_run_seed"] = int(job["run_seed"])
+    scaffold_options["_resource_policy"] = resource_policy
+    scaffold = load_scaffold(
+        job["scaffold"],
         model=model,
-        tools=tools,
-        logger=logger,
-        scaffold=scaffold,
-        max_steps=int(job["max_steps"]),
-        expected_files=task.get("expected_files", []),
-        run_seed=int(job["run_seed"]),
-        resource_policy=resource_policy,
-        test_command=task.get("test_command", "pytest"),
-        run_final_tests=task.get("run_final_tests", True),
+        task=task,
+        options=scaffold_options,
     )
-    result = agent.run(task["issue"])
-    model_patch = tools.git_diff()
+
+    model_patch = ""
+    terminal_error = None
+    try:
+        agent = SimpleAgent(
+            model=model,
+            tools=tools,
+            logger=logger,
+            scaffold=scaffold,
+            max_steps=int(job["max_steps"]),
+            expected_files=task.get("expected_files", []),
+            run_seed=int(job["run_seed"]),
+            resource_policy=resource_policy,
+            test_command=task.get("test_command", "pytest"),
+            run_final_tests=task.get("run_final_tests", True),
+        )
+        result = agent.run(task["issue"])
+        model_patch = tools.git_diff()
+        outcome = completed_outcome(result, model_patch)
+    except TerminalRunError as error:
+        terminal_error = error
+        try:
+            model_patch = tools.git_diff()
+        except Exception:
+            model_patch = ""
+        result = {
+            "tests_passed": None,
+            "final_tests_passed": None,
+            "agent_self_verified": False,
+            "termination_reason": error.kind,
+            "terminal_error": error.as_dict(),
+            "run_seed": int(job["run_seed"]),
+            "steps": None,
+            "history": [],
+            "scaffold_state": {
+                "strategy": job["scaffold"],
+                "context_files": [],
+                "context_spans": {},
+            },
+        }
+        outcome = error_outcome(error, model_patch)
+        logger.log("terminal_outcome", outcome)
 
     contextbench_path = None
     if task.get("source") == "contextbench":
@@ -129,7 +160,7 @@ def execute_job(
         atomic_write_json(contextbench_path, trajectory)
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "completed",
         "run_id": run_id,
         "job": job,
@@ -148,6 +179,10 @@ def execute_job(
         ),
         "model_patch": model_patch,
         "result": result,
+        "outcome": outcome,
+        "terminal_error": (
+            terminal_error.as_dict() if terminal_error is not None else None
+        ),
     }
 
 

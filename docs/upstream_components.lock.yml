@@ -90,7 +90,7 @@ components:
     license: MIT
     role:
       - huggingface_to_gguf_conversion
-      - Q4_K_M_quantization
+      - Q8_0_quantization
       - openai_compatible_inference_server
     implementation:
       - convert_hf_to_gguf.py
