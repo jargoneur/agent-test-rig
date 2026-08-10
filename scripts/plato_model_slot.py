@@ -118,13 +118,13 @@ def main() -> None:
         raise FileNotFoundError("Model registry is missing: %s" % registry_path)
 
     state = inspect_slot(registry_path, args.keep_model_id)
+    selected = validate_keep_hash(registry_path, args.keep_model_id)
     if args.remove_other_artifacts:
         for entry in state["other_artifacts"]:
             Path(entry["artifact"]).unlink()
             print("Removed:", entry["model_id"], entry["artifact"])
         state = inspect_slot(registry_path, args.keep_model_id)
 
-    selected = validate_keep_hash(registry_path, args.keep_model_id)
     state["selected"] = selected
     state["policy_ok"] = state["keep_present"] and not state["other_artifacts"]
 
