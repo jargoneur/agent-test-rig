@@ -91,11 +91,12 @@ def source_weight_manifest(info: Any) -> Dict[str, Any]:
 
 
 def check_storage(
-    output_root: Path,
+    path: Path,
     estimated_required_bytes: Optional[int],
     reserve_gib: float,
+    estimate_rule: str,
 ) -> Dict[str, Any]:
-    usage = shutil.disk_usage(output_root)
+    usage = shutil.disk_usage(path)
     reserve_bytes = max(0, int(reserve_gib * GIB))
     report = {
         "filesystem_free_gib": round(usage.free / GIB, 3),
@@ -105,7 +106,8 @@ def check_storage(
             if estimated_required_bytes is not None
             else None
         ),
-        "estimate_rule": "snapshot_metadata_times_2.75_plus_reserve",
+        "path": str(path),
+        "estimate_rule": estimate_rule,
     }
     if estimated_required_bytes is not None:
         required_with_reserve = estimated_required_bytes + reserve_bytes
@@ -141,6 +143,13 @@ def main() -> None:
     )
     parser.add_argument("--registry", default=str(DEFAULT_REGISTRY))
     parser.add_argument("--output-root", default=str(ROOT / "model_artifacts"))
+    parser.add_argument(
+        "--work-root",
+        help=(
+            "Scratch root for the downloaded snapshot, F16 conversion and Q8_0 "
+            "quantizer output. Defaults to --output-root."
+        ),
+    )
     parser.add_argument("--context-size", type=int, default=32768)
     parser.add_argument("--parallel", type=int, default=1)
     parser.add_argument("--cache-type-k", default="f16")
@@ -201,8 +210,15 @@ def main() -> None:
     partial_final = final_path.with_suffix(final_path.suffix + ".partial")
     partial_final.unlink(missing_ok=True)
 
-    snapshot = model_dir / "hf_snapshot"
-    f16_path = model_dir / (args.profile_key + "-F16.gguf")
+    work_root = (
+        Path(args.work_root).expanduser().resolve()
+        if args.work_root
+        else output_root
+    )
+    work_model_dir = work_root / args.profile_key
+    snapshot = work_model_dir / "hf_snapshot"
+    f16_path = work_model_dir / (args.profile_key + "-F16.gguf")
+    quantized_work_path = work_model_dir / (args.profile_key + "-Q8_0.gguf.partial")
     storage_report: Dict[str, Any] = {}
     conversion_succeeded = False
 
@@ -216,6 +232,7 @@ def main() -> None:
                 output_root,
                 estimated,
                 args.storage_reserve_gib,
+                "existing_gguf_copy_plus_reserve",
             )
         if source != final_path:
             shutil.copy2(source, partial_final)
@@ -237,12 +254,28 @@ def main() -> None:
         estimated_peak = (
             int(snapshot_size * 2.75) if snapshot_size is not None else None
         )
+        work_model_dir.mkdir(parents=True, exist_ok=True)
+        quantized_work_path.unlink(missing_ok=True)
         if not args.skip_storage_check:
-            storage_report = check_storage(
-                output_root,
+            work_report = check_storage(
+                work_root,
                 estimated_peak,
                 args.storage_reserve_gib,
+                "snapshot_metadata_times_2.75_plus_reserve",
             )
+            if work_root == output_root:
+                output_report = work_report
+            else:
+                output_report = check_storage(
+                    output_root,
+                    snapshot_size,
+                    args.storage_reserve_gib,
+                    "snapshot_metadata_upper_bound_for_q8_0_plus_reserve",
+                )
+            storage_report = {
+                "work": work_report,
+                "durable_output": output_report,
+            }
 
         try:
             snapshot_download(
@@ -262,15 +295,30 @@ def main() -> None:
                     "f16",
                 ]
             )
-            run([str(quantizer), str(f16_path), str(partial_final), "Q8_0"])
+            run(
+                [
+                    str(quantizer),
+                    str(f16_path),
+                    str(quantized_work_path),
+                    "Q8_0",
+                ]
+            )
+            if quantized_work_path != partial_final:
+                shutil.copy2(quantized_work_path, partial_final)
             os.replace(str(partial_final), str(final_path))
             conversion_succeeded = True
         finally:
             partial_final.unlink(missing_ok=True)
+            quantized_work_path.unlink(missing_ok=True)
             if conversion_succeeded or not args.keep_failed_intermediates:
                 f16_path.unlink(missing_ok=True)
                 if snapshot.exists() and not args.keep_source_snapshot:
                     shutil.rmtree(snapshot)
+                if work_model_dir != model_dir:
+                    try:
+                        work_model_dir.rmdir()
+                    except OSError:
+                        pass
 
     if not final_path.is_file():
         raise RuntimeError("Provisioning did not produce the final GGUF: %s" % final_path)
@@ -320,7 +368,9 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], cwd=LLAMA_CPP, text=True
         ).strip(),
     }
-    (model_dir / "provenance.json").write_text(
+    metadata_dir = registry_path.parent / args.profile_key
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    (metadata_dir / "provenance.json").write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )

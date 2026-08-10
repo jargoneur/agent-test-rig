@@ -85,12 +85,19 @@ context sizes come from experiments/model_profiles.lock.yml. Do not override
 them manually. Provision one model into the Plato single-artifact slot:
 
     source .venv/bin/activate
-    python scripts/provision_locked_model.py qwen3_5_0_8b
+    python scripts/provision_locked_model.py qwen3_5_0_8b \
+      --output-root /var/tmp/agent-test-rig-model-artifacts \
+      --work-root /dev/shm/agent-test-rig-model-work
 
 This downloads the exact frozen checkpoint, converts it with pinned llama.cpp,
 quantizes it to Q8_0, records the immutable source-weight manifest and writes a
 SHA-256 registry entry. The source snapshot and F16 intermediate are removed
 after successful provisioning unless their keep flags were explicitly used.
+On Plato, `/dev/shm` is intentionally used only for restart-safe disposable
+intermediates; the complete Q8_0 file is copied to a `.partial` file under
+`/var/tmp` and atomically renamed only after quantization succeeds. Registry,
+provenance and validation evidence remain under repository `model_artifacts/`.
+Do not use the quota-limited `/home` filesystem for new Plato model artifacts.
 
 With Plato otherwise stopped, select an idle GPU by exact UUID and run the
 full native-context prefill validation:

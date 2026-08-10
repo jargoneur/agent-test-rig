@@ -29,6 +29,10 @@ def main() -> None:
         "--output-root",
         default=str(ROOT / "model_artifacts"),
     )
+    parser.add_argument(
+        "--work-root",
+        help="Scratch root for download, conversion and quantization intermediates.",
+    )
     parser.add_argument("--existing-gguf")
     parser.add_argument("--storage-reserve-gib", type=float, default=5.0)
     parser.add_argument("--skip-storage-check", action="store_true")
@@ -72,6 +76,10 @@ def main() -> None:
         "--storage-reserve-gib",
         str(args.storage_reserve_gib),
     ]
+    if args.work_root:
+        command.extend(
+            ["--work-root", str(Path(args.work_root).expanduser().resolve())]
+        )
     if args.existing_gguf:
         command.extend(["--existing-gguf", args.existing_gguf])
     if args.skip_storage_check:
