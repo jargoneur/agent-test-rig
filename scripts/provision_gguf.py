@@ -90,6 +90,106 @@ def source_weight_manifest(info: Any) -> Dict[str, Any]:
     }
 
 
+def prepare_converter_snapshot(
+    source_snapshot: Path,
+    converter_snapshot: Path,
+) -> tuple[Path, Optional[Dict[str, Any]]]:
+    """Create an isolated tokenizer-compatible view when metadata needs it."""
+    config_path = source_snapshot / "tokenizer_config.json"
+    tokenizer_path = source_snapshot / "tokenizer.json"
+    if not config_path.is_file() or not tokenizer_path.is_file():
+        return source_snapshot, None
+
+    original_config_bytes = config_path.read_bytes()
+    config = json.loads(original_config_bytes)
+    if not isinstance(config, dict):
+        raise ValueError("tokenizer_config.json must contain a JSON mapping")
+    extra = config.get("extra_special_tokens")
+    if extra is None or isinstance(extra, dict):
+        return source_snapshot, None
+    if not isinstance(extra, list) or any(
+        not isinstance(token, str) or not token for token in extra
+    ):
+        raise ValueError(
+            "extra_special_tokens must be a mapping or a list of non-empty strings"
+        )
+    if len(extra) != len(set(extra)):
+        raise ValueError("extra_special_tokens contains duplicate tokens")
+
+    existing_additional = config.get("additional_special_tokens")
+    if existing_additional is None:
+        existing_additional = []
+    if not isinstance(existing_additional, list) or any(
+        not isinstance(token, str) or not token
+        for token in existing_additional
+    ):
+        raise ValueError("additional_special_tokens must be a list of strings")
+
+    tokenizer_bytes = tokenizer_path.read_bytes()
+    tokenizer = json.loads(tokenizer_bytes)
+    if not isinstance(tokenizer, dict):
+        raise ValueError("tokenizer.json must contain a JSON mapping")
+    added_by_content = {
+        str(item.get("content")): item
+        for item in tokenizer.get("added_tokens", [])
+        if isinstance(item, dict) and item.get("content") is not None
+    }
+    vocab = (tokenizer.get("model") or {}).get("vocab") or {}
+    converted_tokens = []
+    for token in extra:
+        item = added_by_content.get(token)
+        if not item or not bool(item.get("special")):
+            raise RuntimeError(
+                "extra special token is not marked special in tokenizer.json: %s"
+                % token
+            )
+        token_id = item.get("id")
+        if not isinstance(token_id, int):
+            raise RuntimeError("extra special token has no integer ID: %s" % token)
+        vocab_id = vocab.get(token) if isinstance(vocab, dict) else None
+        if vocab_id is not None and int(vocab_id) != token_id:
+            raise RuntimeError("extra special token ID differs from tokenizer vocab")
+        converted_tokens.append({"token": token, "id": token_id})
+
+    combined_additional = list(existing_additional)
+    for token in extra:
+        if token not in combined_additional:
+            combined_additional.append(token)
+    normalized = dict(config)
+    normalized.pop("extra_special_tokens", None)
+    normalized["additional_special_tokens"] = combined_additional
+    normalized_bytes = (
+        json.dumps(normalized, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+    if converter_snapshot.exists():
+        shutil.rmtree(converter_snapshot)
+    shutil.copytree(
+        source_snapshot,
+        converter_snapshot,
+        copy_function=os.link,
+        symlinks=True,
+    )
+    normalized_path = converter_snapshot / "tokenizer_config.json"
+    temporary_path = normalized_path.with_suffix(normalized_path.suffix + ".tmp")
+    temporary_path.write_bytes(normalized_bytes)
+    os.replace(temporary_path, normalized_path)
+
+    return converter_snapshot, {
+        "operation": "extra_special_tokens_list_to_additional_special_tokens",
+        "reason": "transformers_4_57_6_requires_mapping_for_extra_special_tokens",
+        "source_snapshot_unchanged": True,
+        "original_tokenizer_config_sha256": hashlib.sha256(
+            original_config_bytes
+        ).hexdigest(),
+        "normalized_tokenizer_config_sha256": hashlib.sha256(
+            normalized_bytes
+        ).hexdigest(),
+        "tokenizer_json_sha256": hashlib.sha256(tokenizer_bytes).hexdigest(),
+        "tokens": converted_tokens,
+    }
+
+
 def check_storage(
     path: Path,
     estimated_required_bytes: Optional[int],
@@ -236,6 +336,8 @@ def main() -> None:
     snapshot = work_model_dir / "hf_snapshot"
     f16_path = work_model_dir / (args.profile_key + "-F16.gguf")
     quantized_work_path = work_model_dir / (args.profile_key + "-Q8_0.gguf.partial")
+    converter_snapshot = work_model_dir / "converter_snapshot"
+    tokenizer_compatibility: Optional[Dict[str, Any]] = None
     storage_report: Dict[str, Any] = {}
     conversion_succeeded = False
 
@@ -301,11 +403,15 @@ def main() -> None:
                 local_dir=str(snapshot),
                 token=args.token,
             )
+            converter_input, tokenizer_compatibility = prepare_converter_snapshot(
+                snapshot,
+                converter_snapshot,
+            )
             run(
                 [
                     str(ROOT / ".venv" / "bin" / "python"),
                     str(converter),
-                    str(snapshot),
+                    str(converter_input),
                     "--outfile",
                     str(f16_path),
                     "--outtype",
@@ -328,6 +434,8 @@ def main() -> None:
             partial_final.unlink(missing_ok=True)
             quantized_work_path.unlink(missing_ok=True)
             if conversion_succeeded or not args.keep_failed_intermediates:
+                if converter_snapshot.exists():
+                    shutil.rmtree(converter_snapshot)
                 f16_path.unlink(missing_ok=True)
                 if snapshot.exists() and not args.keep_source_snapshot:
                     shutil.rmtree(snapshot)
@@ -388,6 +496,9 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], cwd=LLAMA_CPP, text=True
         ).strip(),
     }
+    if tokenizer_compatibility is not None:
+        provenance["conversion_compatibility"] = tokenizer_compatibility
+
     metadata_dir = registry_path.parent / args.profile_key
     metadata_dir.mkdir(parents=True, exist_ok=True)
     (metadata_dir / "provenance.json").write_text(
