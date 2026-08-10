@@ -190,6 +190,7 @@ class LlamaCppServerManager:
             str(entry.get("cache_type_k") or "f16"),
             "--cache-type-v",
             str(entry.get("cache_type_v") or "f16"),
+            "--no-context-shift",
         ]
         flash_attention = entry.get("flash_attention", "auto")
         if flash_attention is not None:

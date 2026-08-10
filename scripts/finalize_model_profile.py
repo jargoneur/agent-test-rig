@@ -140,7 +140,9 @@ def main() -> None:
         raise RuntimeError("registry deployment fields differ from the frozen profile")
 
     if evidence.get("status") != "validated":
-        raise RuntimeError("validation evidence status must be 'validated'")
+        raise RuntimeError("validation evidence status must be validated")
+    if int(evidence.get("schema_version") or 0) != 2:
+        raise RuntimeError("validation evidence schema must be version 2")
     if evidence.get("profile_key") != args.profile_key:
         raise RuntimeError("validation evidence profile key mismatch")
     if evidence.get("artifact_sha256") != actual_artifact_hash:
@@ -156,10 +158,19 @@ def main() -> None:
     target_tokens = int(expected_deployment["context_size"]) - 1
     if int(evidence.get("tokens_requested") or 0) != target_tokens:
         raise RuntimeError("validation did not request the full native context")
-    if int(evidence.get("tokens_evaluated") or 0) < target_tokens:
+    if int(evidence.get("tokens_evaluated") or 0) != target_tokens:
         raise RuntimeError("validation did not evaluate the full native context")
-    if evidence.get("truncated") is not False:
-        raise RuntimeError("validation prefill was truncated")
+    if evidence.get("prompt_tokens_truncated") is not False:
+        raise RuntimeError("validation dropped prompt tokens")
+    if evidence.get("prompt_prefill_complete") is not True:
+        raise RuntimeError("validation prompt prefill was incomplete")
+    if evidence.get("context_shift_disabled") is not True:
+        raise RuntimeError("validation did not disable context shifting")
+    if (
+        evidence.get("server_reported_truncated") is True
+        and evidence.get("capacity_boundary_stop") is not True
+    ):
+        raise RuntimeError("validation reported unexplained server truncation")
     if not evidence.get("safety_margin_validated"):
         raise RuntimeError("validation did not preserve the frozen VRAM margin")
     peak = evidence.get("measured_peak_vram_gib")

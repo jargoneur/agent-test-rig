@@ -148,3 +148,4 @@ def test_llama_cpp_registry_builds_a_single_gpu_server_command(tmp_path):
     assert command[command.index("--ctx-size") + 1] == "8192"
     assert command[command.index("--split-mode") + 1] == "none"
     assert command[command.index("--alias") + 1] == "model-a"
+    assert "--no-context-shift" in command

@@ -100,9 +100,11 @@ full native-context prefill validation:
 
     python scripts/finalize_model_profile.py qwen3_5_0_8b --validation-evidence model_artifacts/qwen3_5_0_8b/validation-evidence.json
 
-Validation refuses a busy GPU, validates the chat template, evaluates
-native_context_size - 1 tokens without truncation, samples peak VRAM and
-requires the frozen safety margin. Failed evidence is retained as a usable
+Validation refuses a busy GPU, validates the chat template, evaluates exactly
+native_context_size - 1 prompt tokens with context shifting disabled, samples
+peak VRAM and requires the frozen safety margin. The raw llama.cpp capacity-stop
+flag is recorded separately from actual prompt-token loss. Failed evidence is
+retained as a usable
 deployment-boundary result, but it does not open the launch gate. Repeat this
 process for all eleven profile keys, copying validated artifacts and their
 registry and provenance records between hosts when necessary.

@@ -62,6 +62,28 @@ def build_token_prompt(seed_tokens: Iterable[int], target_tokens: int) -> List[i
     return (seed * repeats)[:target_tokens]
 
 
+def assess_prefill_completion(
+    completion: Dict[str, Any],
+    target_tokens: int,
+    context_size: int,
+) -> Dict[str, Any]:
+    evaluated = int(completion.get("tokens_evaluated") or 0)
+    server_truncated = bool(completion.get("truncated", False))
+    prompt_complete = evaluated == target_tokens
+    capacity_boundary_stop = bool(
+        server_truncated
+        and prompt_complete
+        and target_tokens + 1 >= context_size
+    )
+    return {
+        "tokens_evaluated": evaluated,
+        "server_reported_truncated": server_truncated,
+        "prompt_tokens_truncated": evaluated < target_tokens,
+        "prompt_prefill_complete": prompt_complete,
+        "capacity_boundary_stop": capacity_boundary_stop,
+    }
+
+
 def capacity_has_margin(
     peak_mib: float,
     total_mib: float,
@@ -247,7 +269,7 @@ def main() -> None:
         )
 
     evidence: Dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "running",
         "profile_key": args.profile_key,
         "model_id": profile["model_id"],
@@ -266,6 +288,11 @@ def main() -> None:
         "chat_template_validated": False,
         "full_context_prefill_completed": False,
         "truncated": None,
+        "server_reported_truncated": None,
+        "prompt_tokens_truncated": None,
+        "prompt_prefill_complete": False,
+        "capacity_boundary_stop": False,
+        "context_shift_disabled": True,
         "tokens_requested": None,
         "tokens_evaluated": None,
     }
@@ -344,17 +371,29 @@ def main() -> None:
                 "cache_prompt": False,
             },
         )
-        evaluated = int(completion.get("tokens_evaluated") or 0)
-        truncated = bool(completion.get("truncated", False))
+        assessment = assess_prefill_completion(
+            completion,
+            target_tokens,
+            int(deployment["context_size"]),
+        )
         evidence["tokens_requested"] = target_tokens
-        evidence["tokens_evaluated"] = evaluated
-        evidence["truncated"] = truncated
-        if truncated or evaluated < target_tokens:
+        evidence.update(assessment)
+        evidence["truncated"] = assessment["server_reported_truncated"]
+        if not assessment["prompt_prefill_complete"]:
             raise RuntimeError(
-                "native-context prefill was truncated or incomplete: "
-                "requested=%d evaluated=%d truncated=%s"
-                % (target_tokens, evaluated, truncated)
+                "native-context prompt prefill was incomplete: "
+                "requested=%d evaluated=%d server_truncated=%s"
+                % (
+                    target_tokens,
+                    assessment["tokens_evaluated"],
+                    assessment["server_reported_truncated"],
+                )
             )
+        if (
+            assessment["server_reported_truncated"]
+            and not assessment["capacity_boundary_stop"]
+        ):
+            raise RuntimeError("llama.cpp reported an unexpected truncation")
         evidence["full_context_prefill_completed"] = True
         evidence["status"] = "validated"
     except Exception as error:
