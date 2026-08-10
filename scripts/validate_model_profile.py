@@ -31,6 +31,9 @@ DEPLOYMENT_FIELDS = (
     "flash_attention",
     "fit",
     "fit_target_mib",
+    "gpu_count",
+    "split_mode",
+    "tensor_split",
 )
 
 
@@ -90,6 +93,17 @@ def capacity_has_margin(
     fit_target_mib: float,
 ) -> bool:
     return peak_mib > 0 and total_mib - peak_mib >= fit_target_mib
+
+
+def capacity_group_has_margin(
+    peaks_mib: Dict[str, float],
+    totals_mib: Dict[str, float],
+    fit_target_mib: float,
+) -> bool:
+    return bool(peaks_mib) and all(
+        capacity_has_margin(peaks_mib.get(gpu_uuid, 0.0), total, fit_target_mib)
+        for gpu_uuid, total in totals_mib.items()
+    )
 
 
 def _csv_rows(command: List[str]) -> List[List[str]]:
@@ -203,7 +217,12 @@ def main() -> None:
         description="Validate one locked model at native context and record VRAM evidence."
     )
     parser.add_argument("profile_key")
-    parser.add_argument("--gpu-uuid", required=True)
+    parser.add_argument(
+        "--gpu-uuid",
+        action="append",
+        required=True,
+        help="Exact GPU UUID. Repeat in CUDA device order for multi-GPU profiles.",
+    )
     parser.add_argument(
         "--lock",
         default=str(ROOT / "experiments" / "model_profiles.lock.yml"),
@@ -260,8 +279,21 @@ def main() -> None:
     if llama_commit != expected_llama_commit:
         raise RuntimeError("llama.cpp checkout differs from the frozen runtime")
 
-    baseline = gpu_memory(args.gpu_uuid)
-    active = gpu_compute_processes(args.gpu_uuid)
+    gpu_uuids = list(args.gpu_uuid)
+    if len(gpu_uuids) != len(set(gpu_uuids)):
+        raise RuntimeError("selected GPU UUIDs must be unique")
+    expected_gpu_count = int(deployment.get("gpu_count") or 1)
+    if len(gpu_uuids) != expected_gpu_count:
+        raise RuntimeError(
+            "profile requires %d GPUs but %d were selected"
+            % (expected_gpu_count, len(gpu_uuids))
+        )
+    baselines = {gpu_uuid: gpu_memory(gpu_uuid) for gpu_uuid in gpu_uuids}
+    active = [
+        process
+        for gpu_uuid in gpu_uuids
+        for process in gpu_compute_processes(gpu_uuid)
+    ]
     if active:
         raise RuntimeError(
             "selected GPU already has compute processes: %s"
@@ -269,7 +301,7 @@ def main() -> None:
         )
 
     evidence: Dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "running",
         "profile_key": args.profile_key,
         "model_id": profile["model_id"],
@@ -277,9 +309,19 @@ def main() -> None:
         "artifact": str(artifact),
         "artifact_sha256": actual_hash,
         "llama_cpp_commit": llama_commit,
-        "gpu_uuid": args.gpu_uuid,
-        "gpu_total_vram_gib": baseline["total_mib"] / 1024.0,
-        "gpu_baseline_used_mib": baseline["used_mib"],
+        "gpu_uuid": gpu_uuids[0],
+        "gpu_uuids": gpu_uuids,
+        "gpu_total_vram_gib": sum(
+            baseline["total_mib"] for baseline in baselines.values()
+        ) / 1024.0,
+        "gpu_total_vram_by_uuid_mib": {
+            gpu_uuid: baseline["total_mib"]
+            for gpu_uuid, baseline in baselines.items()
+        },
+        "gpu_baseline_used_by_uuid_mib": {
+            gpu_uuid: baseline["used_mib"]
+            for gpu_uuid, baseline in baselines.items()
+        },
         "context_size": int(deployment["context_size"]),
         "cache_type_k": deployment["cache_type_k"],
         "cache_type_v": deployment["cache_type_v"],
@@ -296,19 +338,22 @@ def main() -> None:
         "tokens_requested": None,
         "tokens_evaluated": None,
     }
-    sampler = GpuSampler(args.gpu_uuid)
+    samplers = {
+        gpu_uuid: GpuSampler(gpu_uuid) for gpu_uuid in gpu_uuids
+    }
     manager: Optional[LlamaCppServerManager] = None
     failure: Optional[Exception] = None
 
     try:
-        sampler.start()
+        for sampler in samplers.values():
+            sampler.start()
         manager = LlamaCppServerManager(
             {
                 "registry": str(registry_path),
                 "binary": str(Path(args.binary).expanduser().resolve()),
                 "host": "127.0.0.1",
                 "port": int(args.port),
-                "gpu": args.gpu_uuid,
+                "gpus": gpu_uuids,
                 "startup_timeout_seconds": int(args.startup_timeout_seconds),
                 "shutdown_timeout_seconds": 30,
                 "log_path": str(
@@ -406,29 +451,52 @@ def main() -> None:
     finally:
         if manager is not None:
             manager.stop()
-        sampler.finish()
-        peak_mib = sampler.maximum_used_mib()
-        evidence["gpu_samples"] = len(sampler.samples)
-        evidence["gpu_sample_errors"] = list(sampler.errors)
-        evidence["measured_peak_vram_mib"] = peak_mib
-        evidence["measured_peak_vram_gib"] = peak_mib / 1024.0
-        evidence["runtime_safety_margin_mib"] = (
-            baseline["total_mib"] - peak_mib
+        for sampler in samplers.values():
+            sampler.finish()
+        peaks_mib = {
+            gpu_uuid: sampler.maximum_used_mib()
+            for gpu_uuid, sampler in samplers.items()
+        }
+        totals_mib = {
+            gpu_uuid: baseline["total_mib"]
+            for gpu_uuid, baseline in baselines.items()
+        }
+        sample_errors = [
+            "%s: %s" % (gpu_uuid, error)
+            for gpu_uuid, sampler in samplers.items()
+            for error in sampler.errors
+        ]
+        margins_mib = {
+            gpu_uuid: totals_mib[gpu_uuid] - peaks_mib[gpu_uuid]
+            for gpu_uuid in gpu_uuids
+        }
+        evidence["gpu_samples"] = sum(
+            len(sampler.samples) for sampler in samplers.values()
         )
+        evidence["gpu_samples_by_uuid"] = {
+            gpu_uuid: len(sampler.samples)
+            for gpu_uuid, sampler in samplers.items()
+        }
+        evidence["gpu_sample_errors"] = sample_errors
+        evidence["measured_peak_vram_by_uuid_mib"] = peaks_mib
+        evidence["measured_peak_vram_mib"] = sum(peaks_mib.values())
+        evidence["measured_peak_vram_gib"] = sum(peaks_mib.values()) / 1024.0
+        evidence["runtime_safety_margin_by_uuid_mib"] = margins_mib
+        evidence["runtime_safety_margin_mib"] = min(margins_mib.values())
         evidence["required_safety_margin_mib"] = float(
             deployment["fit_target_mib"]
         )
-        evidence["safety_margin_validated"] = capacity_has_margin(
-            peak_mib,
-            baseline["total_mib"],
+        evidence["safety_margin_validated"] = capacity_group_has_margin(
+            peaks_mib,
+            totals_mib,
             float(deployment["fit_target_mib"]),
         )
         if (
             evidence["status"] == "validated"
             and (
-                sampler.errors
+                sample_errors
                 or not evidence["safety_margin_validated"]
-                or not sampler.samples
+                or any(not sampler.samples for sampler in samplers.values())
             )
         ):
             evidence["status"] = "failed"

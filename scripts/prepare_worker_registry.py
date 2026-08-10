@@ -18,6 +18,9 @@ DEPLOYMENT_FIELDS = (
     "flash_attention",
     "fit",
     "fit_target_mib",
+    "gpu_count",
+    "split_mode",
+    "tensor_split",
 )
 
 

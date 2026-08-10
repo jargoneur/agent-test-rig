@@ -26,6 +26,9 @@ def write_inputs(tmp_path: Path, context_size: int = 4096):
         "flash_attention": "auto",
         "fit": True,
         "fit_target_mib": 1536,
+        "gpu_count": 1,
+        "split_mode": "none",
+        "tensor_split": None,
         "validation_status": "validated",
     }
     registry = {
@@ -94,6 +97,7 @@ def test_prepare_worker_registry_accepts_exact_deployment(tmp_path):
     verified = yaml.safe_load(output.read_text(encoding="utf-8"))
     assert verified["models"]["demo"]["context_size"] == 4096
     assert verified["models"]["demo"]["profile_sha256"] == "a" * 64
+    assert verified["models"]["demo"]["gpu_count"] == 1
 
 
 def test_prepare_worker_registry_rejects_deployment_mismatch(tmp_path):

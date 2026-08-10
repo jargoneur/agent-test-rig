@@ -267,6 +267,11 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
+      gpu_count: 2
+      split_mode: layer
+      tensor_split:
+      - 1.0
+      - 1.0
       validation_status: pending_artifact_measurement
   qwen3_5_35b_a3b:
     model_revision: 59d61f3ce65a6d9863b86d2e96597125219dc754
@@ -312,6 +317,11 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
+      gpu_count: 2
+      split_mode: layer
+      tensor_split:
+      - 1.0
+      - 1.0
       validation_status: pending_artifact_measurement
   gemma4_e2b_it:
     model_revision: 3e22461f65e89153144f8adb70e3b8c2cc9845a7
@@ -355,6 +365,9 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
+      gpu_count: 1
+      split_mode: none
+      tensor_split: null
       validation_status: pending_artifact_measurement
   gemma4_e4b_it:
     model_revision: ee0ef6023621cff504d758262d4e04895a5af4a2
@@ -397,6 +410,9 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
+      gpu_count: 1
+      split_mode: none
+      tensor_split: null
       validation_status: pending_artifact_measurement
   gemma4_12b_it:
     model_revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7
@@ -439,6 +455,9 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
+      gpu_count: 1
+      split_mode: none
+      tensor_split: null
       validation_status: pending_artifact_measurement
   gemma4_26b_a4b_it:
     model_revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
@@ -481,6 +500,11 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
+      gpu_count: 2
+      split_mode: layer
+      tensor_split:
+      - 1.0
+      - 1.0
       validation_status: pending_artifact_measurement
   gemma4_31b_it:
     model_revision: 842da3794eaa0b77d5f08bae87a17459d91ff475
@@ -523,6 +547,11 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
+      gpu_count: 2
+      split_mode: layer
+      tensor_split:
+      - 1.0
+      - 1.0
       validation_status: pending_artifact_measurement
 validation_gate:
   benchmark_runs_allowed: false

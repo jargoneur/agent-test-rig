@@ -18,6 +18,7 @@ MODEL_IDS="${MODEL_IDS:-}"
 RESOURCE_CLASSES="${RESOURCE_CLASSES:-}"
 WAVES="${WAVES:-}"
 SELECTED_GPU_UUIDS_RAW="${PLATO_GPU_UUIDS:-}"
+SELECTED_GPU_GROUPS_RAW="${PLATO_GPU_GROUPS:-}"
 STORAGE_SOFT_LIMIT_GIB="${PLATO_STORAGE_SOFT_LIMIT_GIB:-80}"
 STORAGE_RESERVE_GIB="${PLATO_STORAGE_RESERVE_GIB:-5}"
 
@@ -66,19 +67,48 @@ if [[ -z "$ACTIVE_MODEL_ID" ]]; then
     exit 1
 fi
 
-if [[ -z "$SELECTED_GPU_UUIDS_RAW" ]]; then
-    echo "Set PLATO_GPU_UUIDS explicitly after checking nvidia-smi." >&2
-    echo "Example: export PLATO_GPU_UUIDS=GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" >&2
+if [[ -n "$SELECTED_GPU_UUIDS_RAW" && -n "$SELECTED_GPU_GROUPS_RAW" ]]; then
+    echo "Set PLATO_GPU_UUIDS or PLATO_GPU_GROUPS, not both." >&2
     exit 1
 fi
-IFS=',' read -r -a RAW_SELECTED_GPU_UUIDS <<< "$SELECTED_GPU_UUIDS_RAW"
+if [[ -z "$SELECTED_GPU_UUIDS_RAW" && -z "$SELECTED_GPU_GROUPS_RAW" ]]; then
+    echo "Set exact idle GPUs with PLATO_GPU_UUIDS or PLATO_GPU_GROUPS." >&2
+    exit 1
+fi
+
+SELECTED_GPU_GROUPS=()
 SELECTED_GPU_UUIDS=()
-for raw_uuid in "${RAW_SELECTED_GPU_UUIDS[@]}"; do
-    gpu_uuid="$(trim "$raw_uuid")"
-    [[ -n "$gpu_uuid" ]] && SELECTED_GPU_UUIDS+=("$gpu_uuid")
-done
-if [[ "${#SELECTED_GPU_UUIDS[@]}" -ne "$WORKER_COUNT" ]]; then
-    echo "PLATO_GPU_UUIDS contains ${#SELECTED_GPU_UUIDS[@]} UUIDs but PLATO_WORKERS=$WORKER_COUNT." >&2
+if [[ -n "$SELECTED_GPU_GROUPS_RAW" ]]; then
+    IFS=';' read -r -a RAW_GROUPS <<< "$SELECTED_GPU_GROUPS_RAW"
+    for raw_group in "${RAW_GROUPS[@]}"; do
+        group="$(trim "$raw_group")"
+        [[ -n "$group" ]] || continue
+        IFS=',' read -r -a RAW_GROUP_UUIDS <<< "$group"
+        NORMALIZED_GROUP=()
+        for raw_uuid in "${RAW_GROUP_UUIDS[@]}"; do
+            gpu_uuid="$(trim "$raw_uuid")"
+            [[ -n "$gpu_uuid" ]] && NORMALIZED_GROUP+=("$gpu_uuid")
+        done
+        if [[ "${#NORMALIZED_GROUP[@]}" -eq 0 ]]; then
+            echo "PLATO_GPU_GROUPS contains an empty group." >&2
+            exit 1
+        fi
+        normalized="$(IFS=,; echo "${NORMALIZED_GROUP[*]}")"
+        SELECTED_GPU_GROUPS+=("$normalized")
+        SELECTED_GPU_UUIDS+=("${NORMALIZED_GROUP[@]}")
+    done
+else
+    IFS=',' read -r -a RAW_SELECTED_GPU_UUIDS <<< "$SELECTED_GPU_UUIDS_RAW"
+    for raw_uuid in "${RAW_SELECTED_GPU_UUIDS[@]}"; do
+        gpu_uuid="$(trim "$raw_uuid")"
+        if [[ -n "$gpu_uuid" ]]; then
+            SELECTED_GPU_GROUPS+=("$gpu_uuid")
+            SELECTED_GPU_UUIDS+=("$gpu_uuid")
+        fi
+    done
+fi
+if [[ "${#SELECTED_GPU_GROUPS[@]}" -ne "$WORKER_COUNT" ]]; then
+    echo "Selected GPU groups (${#SELECTED_GPU_GROUPS[@]}) do not match PLATO_WORKERS=$WORKER_COUNT." >&2
     exit 1
 fi
 
@@ -107,6 +137,25 @@ for gpu_uuid in "${SELECTED_GPU_UUIDS[@]}"; do
     if grep -Fxq "$gpu_uuid" <<< "$ACTIVE_COMPUTE_UUIDS"; then
         echo "Selected GPU already has an active compute process: $gpu_uuid" >&2
         echo "Choose another GPU after reviewing nvidia-smi." >&2
+        exit 1
+    fi
+done
+
+MODEL_GPU_COUNT="$(
+    .venv/bin/python - "$REGISTRY" "$ACTIVE_MODEL_ID" <<'PY'
+import pathlib
+import sys
+import yaml
+
+registry = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+entry = registry["models"][sys.argv[2]]
+print(int(entry.get("gpu_count") or 1))
+PY
+)"
+for gpu_group in "${SELECTED_GPU_GROUPS[@]}"; do
+    IFS=',' read -r -a GROUP_UUIDS <<< "$gpu_group"
+    if [[ "${#GROUP_UUIDS[@]}" -ne "$MODEL_GPU_COUNT" ]]; then
+        echo "Model $ACTIVE_MODEL_ID requires $MODEL_GPU_COUNT GPUs per worker; group $gpu_group has ${#GROUP_UUIDS[@]}." >&2
         exit 1
     fi
 done
@@ -189,16 +238,16 @@ fi
     --token-file "$TOKEN_FILE" >/dev/null
 
 for index in $(seq 0 $((WORKER_COUNT - 1))); do
-    gpu="${SELECTED_GPU_UUIDS[$index]}"
+    gpu_group="${SELECTED_GPU_GROUPS[$index]}"
     port="$((8080 + index))"
-    worker_id="plato-v100-gpu${index}"
+    worker_id="plato-v100-group${index}"
 
     nohup env \
         SCHEDULER_URL="http://127.0.0.1:8787" \
         SCHEDULER_TOKEN_FILE="$TOKEN_FILE" \
         MODEL_REGISTRY="$REGISTRY" \
         WORKER_ID="$worker_id" \
-        WORKER_GPU="$gpu" \
+        WORKER_GPU="$gpu_group" \
         LLAMA_PORT="$port" \
         RESOURCE_MODE="manual_operator" \
         SHARED_RESOURCE="true" \
@@ -231,6 +280,7 @@ fi
 echo "Plato system started."
 echo "Manifest: $MANIFEST"
 echo "Active Plato model: $ACTIVE_MODEL_ID"
+echo "Selected GPU groups: ${SELECTED_GPU_GROUPS[*]}"
 echo "Selected GPU UUIDs: ${SELECTED_GPU_UUIDS[*]}"
 echo "Scheduler database: $SCHEDULER_DB"
 echo "Backup directory: $BACKUP_DIR"

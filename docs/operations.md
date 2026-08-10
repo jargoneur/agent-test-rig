@@ -186,11 +186,20 @@ bash scripts/start_plato.sh jobs/contextbench_distributed_smoke.jsonl
 ```
 
 `MODEL_IDS` must be exactly one model ID on Plato. `PLATO_WORKERS` defaults to
-1. PLATO_GPU_UUIDS must contain the same number of exact, idle GPU UUIDs.
-Increase the worker count only after the one-GPU smoke has passed and the operator
-deliberately chooses to use more GPUs. Multiple Plato workers may load the same
-selected GGUF on different GPUs; they still satisfy the one-artifact storage
-rule.
+1. For single-GPU profiles, `PLATO_GPU_UUIDS` contains one exact, idle UUID per
+worker. Frozen multi-GPU profiles use `PLATO_GPU_GROUPS`: semicolons separate
+workers and commas preserve CUDA device order inside each worker. The launcher
+checks every UUID for presence, uniqueness and idleness and refuses groups whose
+size differs from the selected model's frozen `gpu_count`.
+
+For example, two concurrent two-GPU workers for a large model use:
+
+    export PLATO_WORKERS=2
+    export PLATO_GPU_GROUPS="GPU-UUID-0,GPU-UUID-1;GPU-UUID-2,GPU-UUID-3"
+
+Increase worker count only after the one-worker smoke has passed. Multiple
+workers may load the same selected GGUF on disjoint GPU groups; they still
+satisfy the one-artifact storage rule.
 
 The scheduler:
 
@@ -411,8 +420,11 @@ validated artifact and one or more idle GPU UUIDs, then start the core manifest:
     export MODEL_IDS=qwen3_5_0_8b
     export PLATO_WORKERS=1
     export PLATO_GPU_UUIDS=GPU-REPLACE-WITH-UUID
+    unset PLATO_GPU_GROUPS
     export SCHEDULER_DB=scheduler/contextbench_core.sqlite3
     bash scripts/start_plato.sh jobs/contextbench_scaffold_boundaries_v1.jsonl
 
-Do not run that command until the operator has reviewed the green launch-gate
-report and explicitly decided to begin the large experiment.
+For a frozen two-GPU profile, unset `PLATO_GPU_UUIDS` and set one or two
+disjoint groups in `PLATO_GPU_GROUPS` as shown above. Do not run either launch
+form until the operator has reviewed the green launch-gate report and explicitly
+decided to begin the large experiment.

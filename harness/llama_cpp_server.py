@@ -6,7 +6,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 import yaml
@@ -28,6 +28,18 @@ def _resolve_path(value: str) -> Path:
     if not path.is_absolute():
         path = PROJECT_ROOT / path
     return path.resolve()
+
+
+def _gpu_selectors(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    raw_values = (
+        value if isinstance(value, (list, tuple)) else str(value).split(",")
+    )
+    selectors = [str(item).strip() for item in raw_values if str(item).strip()]
+    if len(selectors) != len(set(selectors)):
+        raise ValueError("GPU selectors must be unique")
+    return selectors
 
 
 class LlamaCppServerManager:
@@ -53,7 +65,10 @@ class LlamaCppServerManager:
         self.shutdown_timeout = int(
             self.config.get("shutdown_timeout_seconds") or 30
         )
-        self.gpu = self.config.get("gpu")
+        self.gpus = _gpu_selectors(
+            self.config.get("gpus", self.config.get("gpu"))
+        )
+        self.gpu = ",".join(self.gpus) if self.gpus else None
         self.log_path = _resolve_path(
             str(
                 self.config.get("log_path")
@@ -119,6 +134,9 @@ class LlamaCppServerManager:
                 "cache_type_k": entry.get("cache_type_k"),
                 "cache_type_v": entry.get("cache_type_v"),
                 "gpu_layers": entry.get("gpu_layers"),
+                "gpu_count": entry.get("gpu_count", 1),
+                "split_mode": entry.get("split_mode", "none"),
+                "tensor_split": entry.get("tensor_split"),
             }
         return profiles
 
@@ -168,6 +186,19 @@ class LlamaCppServerManager:
 
     def _command(self, model_id: str, entry: Dict[str, Any]):
         alias = str(entry.get("alias") or model_id)
+        gpu_count = int(entry.get("gpu_count") or 1)
+        split_mode = str(entry.get("split_mode") or "none")
+        tensor_split = entry.get("tensor_split")
+        if tensor_split is not None:
+            if not isinstance(tensor_split, list) or len(tensor_split) != gpu_count:
+                raise ValueError("tensor_split must contain one value per GPU")
+            if any(float(value) <= 0 for value in tensor_split):
+                raise ValueError("tensor_split values must be positive")
+            if split_mode == "none":
+                raise ValueError("tensor_split requires a multi-GPU split mode")
+            tensor_split_value = ",".join(str(value) for value in tensor_split)
+        else:
+            tensor_split_value = None
         command = [
             str(self.binary),
             "--model",
@@ -183,7 +214,7 @@ class LlamaCppServerManager:
             "--n-gpu-layers",
             str(entry.get("gpu_layers") or "all"),
             "--split-mode",
-            "none",
+            split_mode,
             "--parallel",
             str(int(entry.get("parallel") or 1)),
             "--cache-type-k",
@@ -192,6 +223,8 @@ class LlamaCppServerManager:
             str(entry.get("cache_type_v") or "f16"),
             "--no-context-shift",
         ]
+        if tensor_split_value is not None:
+            command.extend(["--tensor-split", tensor_split_value])
         flash_attention = entry.get("flash_attention", "auto")
         if flash_attention is not None:
             command.extend(["--flash-attn", str(flash_attention)])
@@ -200,12 +233,25 @@ class LlamaCppServerManager:
             command.extend(["--fit", "on" if bool(fit) else "off"])
         fit_target = entry.get("fit_target_mib")
         if fit_target is not None:
-            command.extend(["--fit-target", str(int(fit_target))])
+            command.extend(
+                [
+                    "--fit-target",
+                    ",".join([str(int(fit_target))] * gpu_count),
+                ]
+            )
         command.extend([str(value) for value in entry.get("extra_args") or []])
         return command
 
     def ensure_model(self, model_id: str) -> Dict[str, Any]:
         entry = self._entry(model_id)
+        expected_gpu_count = int(entry.get("gpu_count") or 1)
+        if self.gpus and len(self.gpus) != expected_gpu_count:
+            raise RuntimeError(
+                "model %s requires %d GPUs, worker selected %d"
+                % (model_id, expected_gpu_count, len(self.gpus))
+            )
+        if expected_gpu_count > 1 and not self.gpus:
+            raise RuntimeError("multi-GPU model requires explicit GPU selectors")
         alias = str(entry.get("alias") or model_id)
         if (
             self.active_model_id == model_id
@@ -225,8 +271,8 @@ class LlamaCppServerManager:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_handle = self.log_path.open("a", encoding="utf-8")
         environment = os.environ.copy()
-        if self.gpu not in (None, ""):
-            environment["CUDA_VISIBLE_DEVICES"] = str(self.gpu)
+        if self.gpus:
+            environment["CUDA_VISIBLE_DEVICES"] = ",".join(self.gpus)
         environment.setdefault("GGML_CUDA_ENABLE_UNIFIED_MEMORY", "0")
 
         command = self._command(model_id, entry)
@@ -261,6 +307,7 @@ class LlamaCppServerManager:
                     "llama_server_binary": str(self.binary),
                     "llama_server_command": command,
                     "gpu": self.gpu,
+                    "gpus": list(self.gpus),
                 }
                 return dict(self.active_runtime)
             time.sleep(2)

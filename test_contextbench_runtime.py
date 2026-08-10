@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from harness.contextbench_tasks import (
@@ -149,3 +150,70 @@ def test_llama_cpp_registry_builds_a_single_gpu_server_command(tmp_path):
     assert command[command.index("--split-mode") + 1] == "none"
     assert command[command.index("--alias") + 1] == "model-a"
     assert "--no-context-shift" in command
+
+
+def test_llama_cpp_registry_builds_a_frozen_multi_gpu_command(tmp_path):
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(b"gguf")
+    registry = tmp_path / "registry.yml"
+    registry.write_text(
+        yaml.safe_dump(
+            {
+                "models": {
+                    "large": {
+                        "artifact": str(artifact),
+                        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                        "gpu_layers": "all",
+                        "gpu_count": 2,
+                        "split_mode": "layer",
+                        "tensor_split": [1.0, 1.0],
+                        "fit_target_mib": 1536,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = LlamaCppServerManager(
+        {
+            "registry": str(registry),
+            "binary": "/bin/true",
+            "gpus": ["GPU-a", "GPU-b"],
+            "log_path": str(tmp_path / "server.log"),
+        },
+        worker_id="multi",
+    )
+
+    command = manager._command("large", manager._entry("large"))
+
+    assert manager.gpus == ["GPU-a", "GPU-b"]
+    assert command[command.index("--split-mode") + 1] == "layer"
+    assert command[command.index("--tensor-split") + 1] == "1.0,1.0"
+    assert command[command.index("--fit-target") + 1] == "1536,1536"
+
+
+def test_multi_gpu_manager_rejects_wrong_worker_gpu_count(tmp_path):
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(b"gguf")
+    registry = tmp_path / "registry.yml"
+    registry.write_text(
+        yaml.safe_dump(
+            {
+                "models": {
+                    "large": {
+                        "artifact": str(artifact),
+                        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                        "gpu_count": 2,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = LlamaCppServerManager(
+        {"registry": str(registry), "gpus": ["GPU-a"]},
+        "multi",
+    )
+
+    with pytest.raises(RuntimeError, match="requires 2 GPUs"):
+        manager.ensure_model("large")

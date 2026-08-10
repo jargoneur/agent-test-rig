@@ -1,6 +1,7 @@
 from scripts.validate_model_profile import (
     assess_prefill_completion,
     build_token_prompt,
+    capacity_group_has_margin,
     capacity_has_margin,
 )
 
@@ -13,6 +14,16 @@ def test_capacity_has_margin_requires_peak_and_fit_reserve():
     assert capacity_has_margin(30000, 32768, 1536) is True
     assert capacity_has_margin(32000, 32768, 1536) is False
     assert capacity_has_margin(0, 32768, 1536) is False
+
+
+def test_capacity_group_requires_margin_on_every_gpu():
+    totals = {"GPU-a": 32768, "GPU-b": 32768}
+    assert capacity_group_has_margin(
+        {"GPU-a": 20000, "GPU-b": 21000}, totals, 1536
+    )
+    assert not capacity_group_has_margin(
+        {"GPU-a": 20000, "GPU-b": 32000}, totals, 1536
+    )
 
 
 def test_full_prompt_at_reserved_generation_boundary_is_not_prompt_loss():

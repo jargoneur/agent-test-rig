@@ -75,7 +75,18 @@ def main() -> None:
         str(int(deployment["fit_target_mib"])),
         "--storage-reserve-gib",
         str(args.storage_reserve_gib),
+        "--gpu-count",
+        str(int(deployment.get("gpu_count") or 1)),
+        "--split-mode",
+        str(deployment.get("split_mode") or "none"),
     ]
+    if deployment.get("tensor_split") is not None:
+        command.extend(
+            [
+                "--tensor-split",
+                ",".join(str(value) for value in deployment["tensor_split"]),
+            ]
+        )
     if args.work_root:
         command.extend(
             ["--work-root", str(Path(args.work_root).expanduser().resolve())]

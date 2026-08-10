@@ -11,6 +11,19 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEPLOYMENT_FIELDS = (
+    "context_size",
+    "gpu_layers",
+    "parallel",
+    "cache_type_k",
+    "cache_type_v",
+    "flash_attention",
+    "fit",
+    "fit_target_mib",
+    "gpu_count",
+    "split_mode",
+    "tensor_split",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -123,17 +136,7 @@ def main() -> None:
         raise RuntimeError("llama.cpp conversion commit differs from the runtime lock")
 
     expected_deployment = {
-        field: deployment[field]
-        for field in (
-            "context_size",
-            "gpu_layers",
-            "parallel",
-            "cache_type_k",
-            "cache_type_v",
-            "flash_attention",
-            "fit",
-            "fit_target_mib",
-        )
+        field: deployment.get(field) for field in DEPLOYMENT_FIELDS
     }
     actual_deployment = {field: entry.get(field) for field in expected_deployment}
     if actual_deployment != expected_deployment:
@@ -141,8 +144,9 @@ def main() -> None:
 
     if evidence.get("status") != "validated":
         raise RuntimeError("validation evidence status must be validated")
-    if int(evidence.get("schema_version") or 0) != 2:
-        raise RuntimeError("validation evidence schema must be version 2")
+    evidence_schema = int(evidence.get("schema_version") or 0)
+    if evidence_schema not in (2, 3):
+        raise RuntimeError("validation evidence schema must be version 2 or 3")
     if evidence.get("profile_key") != args.profile_key:
         raise RuntimeError("validation evidence profile key mismatch")
     if evidence.get("artifact_sha256") != actual_artifact_hash:
@@ -151,6 +155,16 @@ def main() -> None:
         raise RuntimeError("validation evidence llama.cpp commit mismatch")
     if not evidence.get("gpu_uuid"):
         raise RuntimeError("validation evidence lacks an exact GPU UUID")
+    evidence_gpu_uuids = list(
+        evidence.get("gpu_uuids") or [evidence.get("gpu_uuid")]
+    )
+    expected_gpu_count = int(expected_deployment.get("gpu_count") or 1)
+    if len(evidence_gpu_uuids) != expected_gpu_count:
+        raise RuntimeError("validation evidence GPU count mismatch")
+    if len(evidence_gpu_uuids) != len(set(evidence_gpu_uuids)):
+        raise RuntimeError("validation evidence contains duplicate GPU UUIDs")
+    if expected_gpu_count > 1 and evidence_schema != 3:
+        raise RuntimeError("multi-GPU validation requires evidence schema 3")
     if evidence.get("deployment_profile") != expected_deployment:
         raise RuntimeError("validation evidence deployment profile mismatch")
     if not evidence.get("chat_template_validated"):

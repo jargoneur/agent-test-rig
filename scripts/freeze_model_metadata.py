@@ -27,6 +27,12 @@ GEMMA_STANDARD = {
     "top_k": 64,
     "chat_template_kwargs": {"enable_thinking": True},
 }
+MULTI_GPU_PROFILE_KEYS = {
+    "qwen3_5_27b",
+    "qwen3_5_35b_a3b",
+    "gemma4_26b_a4b_it",
+    "gemma4_31b_it",
+}
 RESOURCE_CLASSES = {
     "qwen3_5_0_8b": "small",
     "qwen3_5_2b": "small",
@@ -132,6 +138,13 @@ def update_profile(
                 "flash_attention": "auto",
                 "fit": True,
                 "fit_target_mib": 1536,
+                "gpu_count": 2 if key in MULTI_GPU_PROFILE_KEYS else 1,
+                "split_mode": (
+                    "layer" if key in MULTI_GPU_PROFILE_KEYS else "none"
+                ),
+                "tensor_split": (
+                    [1.0, 1.0] if key in MULTI_GPU_PROFILE_KEYS else None
+                ),
                 "validation_status": "pending_artifact_measurement",
             },
         }

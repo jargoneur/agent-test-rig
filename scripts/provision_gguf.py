@@ -152,6 +152,9 @@ def main() -> None:
     )
     parser.add_argument("--context-size", type=int, default=32768)
     parser.add_argument("--parallel", type=int, default=1)
+    parser.add_argument("--gpu-count", type=int, default=1)
+    parser.add_argument("--split-mode", default="none")
+    parser.add_argument("--tensor-split")
     parser.add_argument("--cache-type-k", default="f16")
     parser.add_argument("--cache-type-v", default="f16")
     parser.add_argument("--fit-target-mib", type=int, default=1536)
@@ -182,6 +185,20 @@ def main() -> None:
         help="Retain downloaded/F16 intermediates after a failed conversion.",
     )
     args = parser.parse_args()
+
+    if args.gpu_count < 1:
+        raise ValueError("--gpu-count must be positive")
+    tensor_split = None
+    if args.tensor_split:
+        tensor_split = [float(value) for value in args.tensor_split.split(",")]
+        if len(tensor_split) != args.gpu_count:
+            raise ValueError("--tensor-split must contain one value per GPU")
+        if any(value <= 0 for value in tensor_split):
+            raise ValueError("--tensor-split values must be positive")
+    if args.gpu_count == 1 and args.split_mode != "none":
+        raise ValueError("single-GPU profiles must use split mode none")
+    if args.gpu_count > 1 and args.split_mode == "none":
+        raise ValueError("multi-GPU profiles require a split mode")
 
     revision = args.revision.strip()
     if len(revision) != 40 or any(ch not in "0123456789abcdefABCDEF" for ch in revision):
@@ -341,6 +358,9 @@ def main() -> None:
         "context_size": args.context_size,
         "gpu_layers": "all",
         "parallel": args.parallel,
+        "gpu_count": args.gpu_count,
+        "split_mode": args.split_mode,
+        "tensor_split": tensor_split,
         "cache_type_k": args.cache_type_k,
         "cache_type_v": args.cache_type_v,
         "flash_attention": "auto",
