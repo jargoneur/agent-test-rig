@@ -192,13 +192,13 @@ models:
       presence_penalty: 0.0
       repetition_penalty: 1.0
       chat_template_kwargs: *id001
-    model_artifact_sha256: pending_download
+    model_artifact_sha256: c62ec46defd236d6e941ca668cabe2c6d57880744849a6af0be02d11ff21981a
     tokenizer_sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
     chat_template_sha256: a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
-    measured_peak_vram_gib: pending_measurement
-    deployment_status: pending_validation
+    quantized_artifact_sha256: 8d73c9d8ff9049010e4ce46e7ed5d7ef93c1216d49d8c26e1738374ab11c755f
+    profile_sha256: 8bf06d9c7ccaa104f612bc8e79fbaffb61384cef682dde5c6340b2bafaa24213
+    measured_peak_vram_gib: 14.041015625
+    deployment_status: validated
     model_id: Qwen/Qwen3.5-9B
     family: qwen3.5
     architecture: dense
@@ -222,7 +222,8 @@ models:
       flash_attention: auto
       fit: true
       fit_target_mib: 1536
-      validation_status: pending_artifact_measurement
+      validation_status: validated
+      validation_evidence_sha256: 199dbd16b1a195351838c0e54023b789dbd65ce50299226bb68bdc9296e267fd
   qwen3_5_27b:
     model_revision: fc05daec18b0a78c049392ed2e771dde82bdf654
     generation_profile_status: resolved_from_exact_official_model_card
