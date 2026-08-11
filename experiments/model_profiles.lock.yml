@@ -521,13 +521,13 @@ models:
       top_p: 0.95
       top_k: 64
       chat_template_kwargs: *id002
-    model_artifact_sha256: pending_download
+    model_artifact_sha256: fce35fdb296a638300774054aa9e15e1b3370475e6a6bf33634eaa7caee2fe4d
     tokenizer_sha256: cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f
     chat_template_sha256: ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4
-    quantized_artifact_sha256: pending_quantization
-    profile_sha256: pending_resolution
-    measured_peak_vram_gib: pending_measurement
-    deployment_status: pending_validation
+    quantized_artifact_sha256: 1112d5ab266e1c80681770e341a6672d892012f743becf3fbdf2f3a65fa3c5aa
+    profile_sha256: 10b6f0938ee8e663e88aeec4e0c6fcf409041b3544406bcdb6aeababecdbc872
+    measured_peak_vram_gib: 49.328125
+    deployment_status: validated
     model_id: google/gemma-4-31B-it
     family: gemma4
     architecture: dense
@@ -558,7 +558,8 @@ models:
       tensor_split:
       - 1.0
       - 1.0
-      validation_status: pending_artifact_measurement
+      validation_status: validated
+      validation_evidence_sha256: 1a1455b174f7489396c3f52aac944a02437180adaf574c96e7120baa9299b44f
 validation_gate:
   benchmark_runs_allowed: false
   validation_smokes_allowed: true
