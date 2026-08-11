@@ -1,5 +1,5 @@
 schema_version: 4
-status: profiles_partially_validated
+status: benchmark_ready
 frozen_at: '2026-08-07'
 policy_document: docs/model_inference_policy.md
 selection_document: docs/model_selection.md
@@ -561,7 +561,7 @@ models:
       validation_status: validated
       validation_evidence_sha256: 1a1455b174f7489396c3f52aac944a02437180adaf574c96e7120baa9299b44f
 validation_gate:
-  benchmark_runs_allowed: false
+  benchmark_runs_allowed: true
   validation_smokes_allowed: true
   unblock_when:
   - all_eleven_source_revisions_resolve
@@ -575,3 +575,7 @@ validation_gate:
   - every_quantized_artifact_hash_is_recorded
   - every_profile_hash_is_recorded
   - distributed_recovery_evidence_is_recorded
+  distributed_recovery_evidence: model_artifacts/validation/distributed-recovery.json
+  distributed_recovery_evidence_sha256: 3a815fcf4050647829bc5fafbe3aff828f968529dc88248692e72afce20e4ad0
+  distributed_recovery_harness_commit: 2ea74883fe5c62c4bff44e954363e8221fb0c39e
+  harness_source_sha256: 20f0f6d74aa944aff71607f90e7b5ebcf65bddb98660c5f954257eefbb5aa7b0
