@@ -175,10 +175,16 @@ The scheduler groups these into eight paired blocks. Every block contains:
 
 ## 5. Start Plato
 
-Use a separate scheduler database for the smoke:
+Use a separate scheduler database for the smoke. On Plato, keep the
+scheduler database, validated backups, worker results, and growing logs on the
+large `/var/tmp` filesystem rather than quota-limited `/home`:
 
 ```bash
-export SCHEDULER_DB=scheduler/contextbench_distributed_smoke.sqlite3
+export SCHEDULER_DB=/var/tmp/agent-test-rig-runtime/scheduler/contextbench_distributed_smoke.sqlite3
+export SCHEDULER_BACKUP_DIR=/var/tmp/agent-test-rig-runtime/scheduler/backups
+export PLATO_RESULTS_ROOT=/var/tmp/agent-test-rig-runtime/results
+export PLATO_LOG_DIR=/var/tmp/agent-test-rig-runtime/logs
+export PLATO_LEASE_SECONDS=28800
 export MODEL_IDS=qwen3_5_0_8b
 export PLATO_WORKERS=1
 export PLATO_GPU_UUIDS=GPU-REPLACE-WITH-UUID
@@ -200,6 +206,12 @@ For example, two concurrent two-GPU workers for a large model use:
 Increase worker count only after the one-worker smoke has passed. Multiple
 workers may load the same selected GGUF on disjoint GPU groups; they still
 satisfy the one-artifact storage rule.
+
+Completed result records, ContextBench trajectories, patches, and logs are
+durable. Task checkout workspaces are disposable and are removed after every
+block attempt, including interruption and infrastructure failure. A generation
+that reaches the manifest-frozen model timeout is recorded as a usable terminal
+model outcome; it does not discard the paired block as an infrastructure error.
 
 The scheduler:
 

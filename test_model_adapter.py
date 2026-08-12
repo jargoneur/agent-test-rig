@@ -35,6 +35,21 @@ def test_transient_server_error_remains_retryable_infrastructure_failure():
         _raise_generation_error(response(503, "service temporarily unavailable"))
 
 
+def test_generation_timeout_is_a_usable_terminal_model_outcome(monkeypatch):
+    def time_out(*args, **kwargs):
+        raise requests.Timeout("generation exceeded deadline")
+
+    monkeypatch.setattr(requests, "post", time_out)
+    model = OpenAICompatibleModel("model-a", timeout=21600)
+
+    with pytest.raises(ModelTerminalError) as timeout_error:
+        model.generate("hello")
+
+    assert timeout_error.value.kind == "model_timeout"
+    assert timeout_error.value.stage == "model_generation"
+    assert timeout_error.value.details == {"timeout_seconds": 21600}
+
+
 def test_openai_adapter_has_no_hidden_temperature_default():
     model = OpenAICompatibleModel("model-a", options={})
     payload = model.build_payload("hello", seed=7)

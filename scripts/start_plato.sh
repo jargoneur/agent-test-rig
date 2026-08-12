@@ -9,11 +9,13 @@ REGISTRY="${MODEL_REGISTRY:-model_artifacts/registry.yml}"
 CORE_CONFIG="$ROOT/experiments/contextbench_core.yml"
 CORE_MANIFEST="$ROOT/jobs/contextbench_scaffold_boundaries_v1.jsonl"
 RUNTIME_DIR="$ROOT/run/plato"
-LOG_DIR="$ROOT/logs/plato"
+LOG_DIR="${PLATO_LOG_DIR:-$ROOT/logs/plato}"
 TOKEN_FILE="$RUNTIME_DIR/scheduler.token"
 SCHEDULER_DB="${SCHEDULER_DB:-scheduler/contextbench.sqlite3}"
 BACKUP_DIR="${SCHEDULER_BACKUP_DIR:-scheduler/backups}"
 WORKER_COUNT="${PLATO_WORKERS:-1}"
+RESULTS_BASE="${PLATO_RESULTS_ROOT:-$ROOT/distributed_results}"
+LEASE_SECONDS="${PLATO_LEASE_SECONDS:-28800}"
 MODEL_IDS="${MODEL_IDS:-}"
 RESOURCE_CLASSES="${RESOURCE_CLASSES:-}"
 WAVES="${WAVES:-}"
@@ -257,6 +259,9 @@ for index in $(seq 0 $((WORKER_COUNT - 1))); do
         MODEL_IDS="$ACTIVE_MODEL_ID" \
         RESOURCE_CLASSES="$RESOURCE_CLASSES" \
         WAVES="$WAVES" \
+        RESULTS_ROOT="$RESULTS_BASE/$worker_id" \
+        WORKER_LOG_DIR="$LOG_DIR/model-servers/$worker_id" \
+        LEASE_SECONDS="$LEASE_SECONDS" \
         bash scripts/start_worker.sh \
         > "$LOG_DIR/worker-gpu${index}.log" 2>&1 &
     echo "$!" > "$RUNTIME_DIR/worker-gpu${index}.pid"

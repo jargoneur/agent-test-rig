@@ -18,6 +18,7 @@ scaffolds:
 
 repeats: 3
 max_steps: 10
+model_timeout_seconds: 21600
 base_seed: 20260807
 wave_size: 25
 max_infrastructure_retries: 2
@@ -30,6 +31,7 @@ design:
   reuse_partial_results: false
   manual_stop_consumes_retry_budget: false
   terminal_model_or_scaffold_failure_is_usable_result: true
+  model_timeout_is_terminal_usable_result: true
   cost_is_research_factor: false
   expected_tasks: 150
   expected_models: 11

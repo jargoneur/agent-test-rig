@@ -36,13 +36,19 @@ from harness.reproducibility import (
 from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
 from harness.task_loader import TaskLoader
 from harness.tools import FileTools
-from harness.workspace import prepare_workspace
+from harness.workspace import WORKSPACES_ROOT, prepare_workspace
 from scaffolds import load_scaffold
 
 
 def safe_name(value: str) -> str:
     import re
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", value)
+
+
+def cleanup_workspace(run_id: str) -> None:
+    workspace = WORKSPACES_ROOT / safe_name(run_id)
+    if workspace.exists():
+        shutil.rmtree(workspace, ignore_errors=True)
 
 
 def worker_metadata(worker_id: str) -> dict:
@@ -82,6 +88,7 @@ def execute_job(
     model = create_model(
         runtime_model_spec,
         options=job["generation_options"],
+        timeout=int(job["model_timeout_seconds"]),
     )
     model_metadata = model.runtime_metadata()
     workspace_name = safe_name(run_id)
@@ -322,9 +329,7 @@ def main():
                 print("failed:", error, file=sys.stderr)
             finally:
                 if not args.keep_workspaces:
-                    workspace = Path(".workspaces") / safe_name(job["run_id"])
-                    if workspace.exists():
-                        shutil.rmtree(workspace, ignore_errors=True)
+                    cleanup_workspace(job["run_id"])
 
             if yielded:
                 break

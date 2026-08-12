@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 from harness.reproducibility import derive_run_seed, git_metadata, utc_now_iso
 
 
-JOB_SCHEMA_VERSION = 3
+JOB_SCHEMA_VERSION = 4
 
 
 def canonical_json(value: Any) -> str:
@@ -83,6 +83,7 @@ def block_identity(job: Dict[str, Any]) -> Dict[str, Any]:
         "repeat": int(job["repeat"]),
         "run_seed": int(job["run_seed"]),
         "max_steps": int(job["max_steps"]),
+        "model_timeout_seconds": int(job["model_timeout_seconds"]),
         "generation_options": job["generation_options"],
         "harness_commit": job.get("harness_commit", ""),
         "recovery": dict(job.get("recovery") or {}),
@@ -118,6 +119,7 @@ def validate_job(job: Dict[str, Any]) -> None:
         "repeat",
         "run_seed",
         "max_steps",
+        "model_timeout_seconds",
         "generation_options",
     }
     missing = sorted(required.difference(job))
@@ -152,6 +154,7 @@ def build_jobs(
     harness_commit: Optional[str] = None,
     default_backend: str = "ollama",
     max_infrastructure_retries: int = 2,
+    model_timeout_seconds: int = 600,
 ) -> List[Dict[str, Any]]:
     if repeats < 1:
         raise ValueError("repeats must be at least 1")
@@ -163,6 +166,8 @@ def build_jobs(
         raise ValueError("Scaffold names must be unique")
     if max_infrastructure_retries < 0:
         raise ValueError("max_infrastructure_retries must be non-negative")
+    if model_timeout_seconds < 1:
+        raise ValueError("model_timeout_seconds must be positive")
 
     normalized_models = [
         normalize_model_spec(model, default_backend=default_backend)
@@ -203,6 +208,7 @@ def build_jobs(
                         "repeat": repeat,
                         "run_seed": run_seed,
                         "max_steps": int(max_steps),
+                        "model_timeout_seconds": int(model_timeout_seconds),
                         "generation_options": dict(model_generation_options),
                         "harness_commit": harness_commit or "",
                         "recovery": {
@@ -260,6 +266,7 @@ def group_jobs_by_block(jobs: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "model_id": first["model"]["id"],
                 "model": model_identity(first["model"]),
                 "generation_options": dict(first["generation_options"]),
+                "model_timeout_seconds": int(first["model_timeout_seconds"]),
                 "harness_commit": str(first.get("harness_commit") or ""),
                 "recovery": dict(first.get("recovery") or {}),
                 "resource_class": (first.get("requirements") or {}).get(

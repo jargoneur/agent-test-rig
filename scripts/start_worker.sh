@@ -24,6 +24,9 @@ RUN_DIR="$ROOT/run/workers/$WORKER_ID"
 CONFIG="$RUN_DIR/worker.yml"
 FILTERED_REGISTRY="$RUN_DIR/verified-registry.yml"
 PAUSE_FILE="$RUN_DIR/PAUSE"
+RESULTS_ROOT="${RESULTS_ROOT:-distributed_results/$WORKER_ID}"
+WORKER_LOG_DIR="${WORKER_LOG_DIR:-logs/workers/$WORKER_ID}"
+LEASE_SECONDS="${LEASE_SECONDS:-28800}"
 
 if [[ ! -x .venv/bin/python ]]; then
     echo "Missing .venv. Run scripts/bootstrap.sh first." >&2
@@ -47,7 +50,7 @@ if [[ ! -f "$SCHEDULER_TOKEN_FILE" ]]; then
     exit 1
 fi
 
-mkdir -p "$RUN_DIR" "logs/workers/$WORKER_ID"
+mkdir -p "$RUN_DIR" "$WORKER_LOG_DIR" "$RESULTS_ROOT"
 rm -f "$PAUSE_FILE"
 
 VALIDATE_ARGS=(
@@ -78,8 +81,8 @@ worker_id: $WORKER_ID
 scheduler_token_file: $SCHEDULER_TOKEN_FILE
 require_clean_repository: true
 scheduler_url: $SCHEDULER_URL
-results_root: distributed_results/$WORKER_ID
-lease_seconds: 14400
+results_root: "$RESULTS_ROOT"
+lease_seconds: $LEASE_SECONDS
 heartbeat_seconds: 30
 idle_seconds: 10
 stop_when_idle: false
@@ -87,6 +90,7 @@ retry_failed_blocks: true
 scheduler_timeout_seconds: 60
 completion_timeout_seconds: 300
 completion_retries: 8
+keep_workspaces: false
 
 resource_policy:
   shared_resource: $SHARED_RESOURCE
@@ -106,7 +110,7 @@ model_runtime:
   gpu: "$WORKER_GPU"
   startup_timeout_seconds: 1800
   shutdown_timeout_seconds: 30
-  log_path: logs/workers/$WORKER_ID/llama-server.log
+  log_path: "$WORKER_LOG_DIR/llama-server.log"
 
 capabilities:
   model_ids:

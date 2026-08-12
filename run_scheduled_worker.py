@@ -17,7 +17,7 @@ from harness.experiment_jobs import atomic_write_json, result_file
 from harness.llama_cpp_server import LlamaCppServerManager
 from harness.reproducibility import git_metadata
 from harness.resource_policy import ResourcePolicy, ResourceYieldRequested
-from run_worker import execute_job
+from run_worker import cleanup_workspace, execute_job
 
 
 class SchedulerPauseRequested(RuntimeError):
@@ -266,6 +266,7 @@ def main() -> None:
     scheduler_timeout = int(config.get("scheduler_timeout_seconds", 60))
     completion_timeout = int(config.get("completion_timeout_seconds", 300))
     completion_retries = int(config.get("completion_retries", 8))
+    keep_workspaces = bool(config.get("keep_workspaces", False))
 
     try:
         resource_policy.checkpoint("before_worker_registration")
@@ -521,6 +522,10 @@ def main() -> None:
                 except Exception as scheduler_error:
                     print("Could not release failed block:", scheduler_error)
                 time.sleep(min(idle_seconds, 30))
+            finally:
+                if not keep_workspaces:
+                    for job in block["jobs"]:
+                        cleanup_workspace(job["run_id"])
 
             if yielded:
                 break

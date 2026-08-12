@@ -216,6 +216,9 @@ def check_jobs(
         if block.get("harness_commit") != current.get("commit"):
             errors.append("block %s was planned from a different harness commit" % block["block_id"])
             break
+        if int(block.get("model_timeout_seconds") or 0) != 21600:
+            errors.append("block %s has the wrong model timeout" % block["block_id"])
+            break
         recovery = block.get("recovery") or {}
         if recovery != {
             "whole_block_restart": True,
@@ -265,6 +268,8 @@ def main() -> None:
         errors.append("experiment config must use three paired repeats")
     if int(config.get("max_infrastructure_retries", -1)) != 2:
         errors.append("experiment config must cap infrastructure retries at two")
+    if int(config.get("model_timeout_seconds", 0)) != 21600:
+        errors.append("experiment config must use the frozen six-hour model timeout")
     design = config.get("design") or {}
     if design.get("cost_is_research_factor") is not False:
         errors.append("cost must not be encoded as a research factor")

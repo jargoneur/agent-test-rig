@@ -84,6 +84,15 @@ def _invalid_model_response(message: str, details=None) -> ModelTerminalError:
     )
 
 
+def _generation_timeout(timeout: int) -> ModelTerminalError:
+    return ModelTerminalError(
+        "model_timeout",
+        "The model server did not finish generation within %d seconds" % timeout,
+        stage="model_generation",
+        details={"timeout_seconds": int(timeout)},
+    )
+
+
 def _resolved_sampling_options(options: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve framework-neutral sampling controls without inventing defaults."""
     resolved = dict(options)
@@ -157,11 +166,15 @@ class OllamaModel:
             "stream": False,
             "options": options,
         }
-        response = requests.post(
-            "%s/api/generate" % self.host,
-            json=payload,
-            timeout=timeout or self.timeout,
-        )
+        request_timeout = int(timeout or self.timeout)
+        try:
+            response = requests.post(
+                "%s/api/generate" % self.host,
+                json=payload,
+                timeout=request_timeout,
+            )
+        except requests.Timeout as error:
+            raise _generation_timeout(request_timeout) from error
         _raise_generation_error(response)
         data = response.json()
         if data.get("error"):
@@ -179,11 +192,15 @@ class OllamaModel:
             "stream": False,
             "options": options,
         }
-        response = requests.post(
-            "%s/api/chat" % self.host,
-            json=payload,
-            timeout=timeout or self.timeout,
-        )
+        request_timeout = int(timeout or self.timeout)
+        try:
+            response = requests.post(
+                "%s/api/chat" % self.host,
+                json=payload,
+                timeout=request_timeout,
+            )
+        except requests.Timeout as error:
+            raise _generation_timeout(request_timeout) from error
         _raise_generation_error(response)
         data = response.json()
         if data.get("error"):
@@ -336,12 +353,16 @@ class OpenAICompatibleModel:
         return payload
 
     def _request(self, payload, options, timeout=None):
-        response = requests.post(
-            "%s/chat/completions" % self.base_url,
-            headers=self._headers(),
-            json=payload,
-            timeout=timeout or self.timeout,
-        )
+        request_timeout = int(timeout or self.timeout)
+        try:
+            response = requests.post(
+                "%s/chat/completions" % self.base_url,
+                headers=self._headers(),
+                json=payload,
+                timeout=request_timeout,
+            )
+        except requests.Timeout as error:
+            raise _generation_timeout(request_timeout) from error
         _raise_generation_error(response)
         data = response.json()
         choices = data.get("choices") or []

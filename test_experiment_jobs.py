@@ -19,6 +19,7 @@ def test_jobs_are_paired_across_scaffolds():
         generation_options={"temperature": 0.2},
         experiment_id="test",
         harness_commit="abc123",
+        model_timeout_seconds=21600,
     )
 
     assert len(jobs) == 4
@@ -35,6 +36,26 @@ def test_jobs_are_paired_across_scaffolds():
     assert by_repeat == {1: {jobs[0]["run_seed"]}, 2: {jobs[2]["run_seed"]}}
     assert len({job["run_id"] for job in jobs}) == 4
     assert len({job["block_id"] for job in jobs}) == 2
+    assert all(job["model_timeout_seconds"] == 21600 for job in jobs)
+
+
+def test_model_timeout_is_part_of_paired_block_identity():
+    arguments = {
+        "tasks": ["task-a"],
+        "models": ["model-a"],
+        "scaffolds": ["no_scaffold", "repo_map"],
+        "repeats": 1,
+        "max_steps": 8,
+        "base_seed": 1,
+        "generation_options": {},
+        "experiment_id": "test",
+        "harness_commit": "abc123",
+    }
+    short = build_jobs(model_timeout_seconds=600, **arguments)
+    long = build_jobs(model_timeout_seconds=21600, **arguments)
+
+    assert short[0]["block_id"] != long[0]["block_id"]
+    assert short[0]["run_id"] != long[0]["run_id"]
 
 
 def test_model_generation_options_override_global_defaults():

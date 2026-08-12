@@ -106,6 +106,7 @@ def main():
         max_infrastructure_retries=int(
             config.get("max_infrastructure_retries", 2)
         ),
+        model_timeout_seconds=int(config.get("model_timeout_seconds", 600)),
     )
 
     output_path = Path(output)
