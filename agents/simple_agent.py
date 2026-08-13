@@ -3,7 +3,11 @@ import json
 import re
 from pathlib import Path
 
-from harness.outcomes import ScaffoldTerminalError, TerminalRunError
+from harness.outcomes import (
+    ModelTerminalError,
+    ScaffoldTerminalError,
+    TerminalRunError,
+)
 from harness.reproducibility import derive_step_seed, sha256_text
 from harness.resource_policy import ResourceYieldRequested
 
@@ -42,6 +46,10 @@ class SimpleAgent:
     def _scaffold_call(stage, function, *args):
         try:
             return function(*args)
+        except ScaffoldTerminalError:
+            raise
+        except ModelTerminalError as error:
+            raise ScaffoldTerminalError(stage, error) from error
         except (TerminalRunError, ResourceYieldRequested, KeyboardInterrupt):
             raise
         except Exception as error:
@@ -66,6 +74,23 @@ class SimpleAgent:
         if "action" not in action:
             raise ValueError(f"Parsed JSON has no action field: {action}")
 
+        required_fields = {
+            "search_text": ("query",),
+            "read_file": ("path",),
+            "replace_text": ("path", "old_text"),
+            "write_file": ("path", "content"),
+        }
+        action_name = str(action.get("action"))
+        missing = [
+            field
+            for field in required_fields.get(action_name, ())
+            if action.get(field) is None
+        ]
+        if missing:
+            raise ValueError(
+                "%s action is missing required field(s): %s"
+                % (action_name, ", ".join(missing))
+            )
         return action
 
     def execute_action(self, action):
@@ -134,6 +159,30 @@ class SimpleAgent:
                 "type": "write_success",
                 "path": path,
                 "existed_before": existed_before,
+                "edit_kind": "write_file",
+            }
+
+        if name == "replace_text":
+            path = action["path"]
+            full_path = self.tools._safe_path(path)
+            if full_path.exists() and path not in self.files_read:
+                return {
+                    "type": "write_blocked",
+                    "path": path,
+                    "reason": "existing_file_not_read",
+                }
+            replacements = self.tools.replace_text(
+                path,
+                action["old_text"],
+                action.get("new_text", ""),
+                action.get("expected_replacements", 1),
+            )
+            return {
+                "type": "write_success",
+                "path": path,
+                "existed_before": True,
+                "edit_kind": "replace_text",
+                "replacements": replacements,
             }
 
         if name == "run_tests":
@@ -201,6 +250,34 @@ class SimpleAgent:
         target_file_written = False
         previous_valid_signature = None
 
+        def attach_partial_result(error):
+            error.partial_result = {
+                "tests_passed": None,
+                "final_tests_passed": None,
+                "agent_self_verified": agent_self_verified,
+                "termination_reason": error.kind,
+                "run_seed": self.run_seed,
+                "steps": len(history),
+                "history": list(history),
+                "scaffold_state": self._scaffold_call(
+                    "scaffold_state_export",
+                    self.scaffold.export_state,
+                    state,
+                ),
+                "parse_errors": parse_errors,
+                "execution_errors": execution_errors,
+                "repeated_valid_actions": repeated_valid_actions,
+                "target_file_read": target_file_read,
+                "target_file_written": target_file_written,
+                "wrote_unread_file_attempts": wrote_unread_file_attempts,
+                "write_blocks": write_blocks,
+                "first_test_step": first_test_step,
+                "first_write_step": first_write_step,
+                "invalid_python_writes": invalid_python_writes,
+                "maximum_repeated_action_streak": maximum_repeated_action_streak,
+            }
+            return error
+
         self.logger.log(
             "run_started",
             {
@@ -218,14 +295,17 @@ class SimpleAgent:
 
         for step in range(1, self.max_steps + 1):
             self._resource_checkpoint("step_%d_before_prompt" % step)
-            context = self._scaffold_call(
-                "scaffold_context",
-                self.scaffold.build_context,
-                issue,
-                self.tools,
-                history,
-                state,
-            )
+            try:
+                context = self._scaffold_call(
+                    "scaffold_context",
+                    self.scaffold.build_context,
+                    issue,
+                    self.tools,
+                    history,
+                    state,
+                )
+            except TerminalRunError as error:
+                raise attach_partial_result(error)
             step_seed = (
                 derive_step_seed(self.run_seed, step)
                 if self.run_seed is not None
@@ -246,7 +326,14 @@ class SimpleAgent:
             )
 
             self._resource_checkpoint("step_%d_before_model_call" % step)
-            response = self.model.generate(context, seed=step_seed)
+            try:
+                generate_action = getattr(self.model, "generate_action", None)
+                if callable(generate_action):
+                    response = generate_action(context, seed=step_seed)
+                else:
+                    response = self.model.generate(context, seed=step_seed)
+            except TerminalRunError as error:
+                raise attach_partial_result(error)
 
             self.logger.log(
                 "model_response",
@@ -287,7 +374,7 @@ class SimpleAgent:
                 if action_name == "read_file" and path in self.expected_files:
                     target_file_read = True
 
-                if action_name == "write_file":
+                if action_name in {"write_file", "replace_text"}:
                     if first_write_step is None:
                         first_write_step = step
 
@@ -295,12 +382,13 @@ class SimpleAgent:
                     if full_path.exists() and path not in self.files_read:
                         wrote_unread_file_attempts += 1
 
-                    syntax_valid = self.python_content_is_valid(
-                        path,
-                        action.get("content", ""),
-                    )
-                    if syntax_valid is False:
-                        invalid_python_writes += 1
+                    if action_name == "write_file":
+                        syntax_valid = self.python_content_is_valid(
+                            path,
+                            action.get("content", ""),
+                        )
+                        if syntax_valid is False:
+                            invalid_python_writes += 1
 
                 if action_name == "run_tests" and first_test_step is None:
                     first_test_step = step

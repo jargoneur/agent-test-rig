@@ -29,6 +29,38 @@ _MEMORY_MARKERS = (
     "kv cache allocation",
 )
 
+ACTION_RESPONSE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["action"],
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": [
+                "list_files",
+                "search_text",
+                "read_file",
+                "replace_text",
+                "write_file",
+                "run_tests",
+                "finish",
+            ],
+        },
+        "glob": {"type": "string"},
+        "limit": {"type": "integer", "minimum": 1},
+        "query": {"type": "string"},
+        "path": {"type": "string"},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "old_text": {"type": "string"},
+        "new_text": {"type": "string"},
+        "expected_replacements": {"type": "integer", "minimum": 1},
+        "content": {"type": "string"},
+        "command": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+}
+
 
 def _response_text(response: requests.Response) -> str:
     try:
@@ -90,6 +122,18 @@ def _generation_timeout(timeout: int) -> ModelTerminalError:
         "The model server did not finish generation within %d seconds" % timeout,
         stage="model_generation",
         details={"timeout_seconds": int(timeout)},
+    )
+
+
+def _output_limit_error(finish_reason: str, details=None) -> ModelTerminalError:
+    return ModelTerminalError(
+        "model_output_limit",
+        "The model reached the frozen per-action output-token limit",
+        stage="model_generation",
+        details={
+            "finish_reason": str(finish_reason),
+            **dict(details or {}),
+        },
     )
 
 
@@ -180,6 +224,43 @@ class OllamaModel:
         if data.get("error"):
             raise _invalid_model_response(str(data["error"]))
         self._capture_metadata(data, options)
+        if str(data.get("done_reason") or "").lower() in {"length", "max_tokens"}:
+            raise _output_limit_error(
+                str(data.get("done_reason")),
+                {
+                    "eval_count": data.get("eval_count"),
+                    "output_token_limit": options.get("num_predict"),
+                },
+            )
+        if data.get("response") is None:
+            raise _invalid_model_response("Ollama response has no generated content")
+        return data["response"]
+
+    def generate_action(self, prompt, seed=None, timeout=None):
+        options = self.effective_options(seed)
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": options,
+            "format": ACTION_RESPONSE_SCHEMA,
+        }
+        request_timeout = int(timeout or self.timeout)
+        try:
+            response = requests.post(
+                "%s/api/generate" % self.host,
+                json=payload,
+                timeout=request_timeout,
+            )
+        except requests.Timeout as error:
+            raise _generation_timeout(request_timeout) from error
+        _raise_generation_error(response)
+        data = response.json()
+        if data.get("error"):
+            raise _invalid_model_response(str(data["error"]))
+        self._capture_metadata(data, options)
+        if str(data.get("done_reason") or "").lower() in {"length", "max_tokens"}:
+            raise _output_limit_error(str(data.get("done_reason")))
         if data.get("response") is None:
             raise _invalid_model_response("Ollama response has no generated content")
         return data["response"]
@@ -206,6 +287,14 @@ class OllamaModel:
         if data.get("error"):
             raise _invalid_model_response(str(data["error"]))
         self._capture_metadata(data, options)
+        if str(data.get("done_reason") or "").lower() in {"length", "max_tokens"}:
+            raise _output_limit_error(
+                str(data.get("done_reason")),
+                {
+                    "eval_count": data.get("eval_count"),
+                    "output_token_limit": options.get("num_predict"),
+                },
+            )
         message = data.get("message") or {}
         content = message.get("content")
         if content is None:
@@ -314,6 +403,7 @@ class OpenAICompatibleModel:
         prompt=None,
         seed=None,
         messages: Optional[List[Dict[str, Any]]] = None,
+        response_schema: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         options = self.effective_options(seed)
         if messages is None:
@@ -350,6 +440,22 @@ class OpenAICompatibleModel:
                 if source in options:
                     payload[target] = options[source]
 
+        if response_schema is not None:
+            if self.backend_name == "llama_cpp":
+                payload["response_format"] = {
+                    "type": "json_object",
+                    "schema": response_schema,
+                }
+            else:
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "agent_action",
+                        "strict": True,
+                        "schema": response_schema,
+                    },
+                }
+
         return payload
 
     def _request(self, payload, options, timeout=None):
@@ -371,13 +477,6 @@ class OpenAICompatibleModel:
                 "OpenAI-compatible server returned no choices",
                 {"response_keys": sorted(data)},
             )
-        message = choices[0].get("message") or {}
-        content = message.get("content")
-        if content is None:
-            raise _invalid_model_response(
-                "OpenAI-compatible response has no message content"
-            )
-
         self.last_generation_metadata = {
             "id": data.get("id"),
             "created": data.get("created"),
@@ -388,11 +487,35 @@ class OpenAICompatibleModel:
             "options": options,
             "request_payload": payload,
         }
+        finish_reason = str(choices[0].get("finish_reason") or "")
+        if finish_reason.lower() in {"length", "max_tokens"}:
+            raise _output_limit_error(
+                finish_reason,
+                {
+                    "usage": data.get("usage", {}),
+                    "output_token_limit": payload.get("max_tokens"),
+                },
+            )
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if content is None:
+            raise _invalid_model_response(
+                "OpenAI-compatible response has no message content"
+            )
         return content
 
     def generate(self, prompt, seed=None, timeout=None):
         options = self.effective_options(seed)
         payload = self.build_payload(prompt=prompt, seed=seed)
+        return self._request(payload, options, timeout=timeout)
+
+    def generate_action(self, prompt, seed=None, timeout=None):
+        options = self.effective_options(seed)
+        payload = self.build_payload(
+            prompt=prompt,
+            seed=seed,
+            response_schema=ACTION_RESPONSE_SCHEMA,
+        )
         return self._request(payload, options, timeout=timeout)
 
     def generate_messages(self, messages, seed=None, timeout=None):

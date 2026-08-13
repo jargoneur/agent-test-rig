@@ -101,7 +101,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    evaluator_python = Path(args.evaluator_python).expanduser().resolve()
+    # resolve() follows uv-managed symlinks to the base interpreter and drops
+    # the isolated evaluator environment.
+    evaluator_python = Path(os.path.abspath(Path(args.evaluator_python).expanduser()))
     if not evaluator_python.is_file():
         raise FileNotFoundError(
             "ContextBench evaluator Python is missing: %s. Run scripts/bootstrap.sh"

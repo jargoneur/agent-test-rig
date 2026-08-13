@@ -34,11 +34,14 @@ class ModelTerminalError(TerminalRunError):
 
 class ScaffoldTerminalError(TerminalRunError):
     def __init__(self, stage: str, error: Exception):
+        details = {"exception_type": error.__class__.__name__}
+        if isinstance(error, TerminalRunError):
+            details["underlying_terminal_error"] = error.as_dict()
         super().__init__(
             "scaffold_failure",
             "%s: %s" % (error.__class__.__name__, error),
             stage=stage,
-            details={"exception_type": error.__class__.__name__},
+            details=details,
         )
 
 

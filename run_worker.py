@@ -135,21 +135,23 @@ def execute_job(
             model_patch = tools.git_diff()
         except Exception:
             model_patch = ""
-        result = {
-            "tests_passed": None,
-            "final_tests_passed": None,
-            "agent_self_verified": False,
-            "termination_reason": error.kind,
-            "terminal_error": error.as_dict(),
-            "run_seed": int(job["run_seed"]),
-            "steps": None,
-            "history": [],
-            "scaffold_state": {
-                "strategy": job["scaffold"],
-                "context_files": [],
-                "context_spans": {},
-            },
-        }
+        result = getattr(error, "partial_result", None)
+        if not isinstance(result, dict):
+            result = {
+                "tests_passed": None,
+                "final_tests_passed": None,
+                "agent_self_verified": False,
+                "termination_reason": error.kind,
+                "run_seed": int(job["run_seed"]),
+                "steps": 0,
+                "history": [],
+                "scaffold_state": {
+                    "strategy": job["scaffold"],
+                    "context_files": [],
+                    "context_spans": {},
+                },
+            }
+        result["terminal_error"] = error.as_dict()
         outcome = error_outcome(error, model_patch)
         logger.log("terminal_outcome", outcome)
 

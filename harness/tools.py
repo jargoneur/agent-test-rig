@@ -114,6 +114,37 @@ class FileTools:
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content, encoding="utf-8")
 
+    def replace_text(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        expected_replacements: int = 1,
+    ) -> int:
+        if not old_text:
+            raise ValueError("replace_text requires non-empty old_text")
+        expected = int(expected_replacements)
+        if expected < 1:
+            raise ValueError("expected_replacements must be positive")
+
+        full_path = self._safe_path(path)
+        if not full_path.is_file():
+            raise FileNotFoundError(
+                "replace_text target does not exist: %s" % path
+            )
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+        actual = content.count(old_text)
+        if actual != expected:
+            raise ValueError(
+                "replace_text expected %d exact occurrence(s), found %d"
+                % (expected, actual)
+            )
+        full_path.write_text(
+            content.replace(old_text, new_text, expected),
+            encoding="utf-8",
+        )
+        return actual
+
     def _normalize_test_output(self, output: str) -> str:
         normalized = output.replace(str(self.repo_path), "<WORKSPACE>")
         normalized = re.sub(r"\b\d+(?:\.\d+)?s\b", "<TIME>", normalized)

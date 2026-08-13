@@ -216,9 +216,17 @@ def check_jobs(
         if block.get("harness_commit") != current.get("commit"):
             errors.append("block %s was planned from a different harness commit" % block["block_id"])
             break
-        if int(block.get("model_timeout_seconds") or 0) != 21600:
+        expected_timeout = int(config.get("model_timeout_seconds") or 0)
+        if int(block.get("model_timeout_seconds") or 0) != expected_timeout:
             errors.append("block %s has the wrong model timeout" % block["block_id"])
             break
+        for key, expected in dict(config.get("generation_options") or {}).items():
+            if (block.get("generation_options") or {}).get(key) != expected:
+                errors.append(
+                    "block %s has the wrong generation option %s"
+                    % (block["block_id"], key)
+                )
+                break
         recovery = block.get("recovery") or {}
         if recovery != {
             "whole_block_restart": True,
@@ -268,13 +276,30 @@ def main() -> None:
         errors.append("experiment config must use three paired repeats")
     if int(config.get("max_infrastructure_retries", -1)) != 2:
         errors.append("experiment config must cap infrastructure retries at two")
-    if int(config.get("model_timeout_seconds", 0)) != 21600:
-        errors.append("experiment config must use the frozen six-hour model timeout")
     design = config.get("design") or {}
     if design.get("cost_is_research_factor") is not False:
         errors.append("cost must not be encoded as a research factor")
     if design.get("reuse_partial_results") is not False:
         errors.append("partial paired-block results must never be reused")
+
+    action_protocol = config.get("action_protocol")
+    if action_protocol is not None:
+        if action_protocol != {
+            "schema_constrained_json": True,
+            "localized_edit_action": "replace_text_v1",
+            "output_limit_outcome": "model_output_limit",
+        }:
+            errors.append("v2 action protocol is not the frozen supported protocol")
+        output_limit = (config.get("generation_options") or {}).get("num_predict")
+        if not isinstance(output_limit, int) or output_limit < 1:
+            errors.append("v2 protocol requires a positive frozen num_predict")
+        timeout = config.get("model_timeout_seconds")
+        if not isinstance(timeout, int) or timeout < 1:
+            errors.append("v2 protocol requires a positive frozen model timeout")
+        if design.get("model_output_limit_is_terminal_usable_result") is not True:
+            errors.append("v2 output-limit events must be usable terminal results")
+    elif int(config.get("model_timeout_seconds", 0)) != 21600:
+        errors.append("v1 experiment config must use its frozen six-hour timeout")
 
     task_manifest = check_task_cache(config, config_path, errors)
     profile_lock = check_profiles(config, config_path, errors)

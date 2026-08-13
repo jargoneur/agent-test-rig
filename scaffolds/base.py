@@ -107,14 +107,16 @@ Protocol:
 - Do not use markdown fences, comments, or explanatory text outside the JSON object.
 - JSON string values must escape literal newlines as \\n.
 - Paths are relative to the repository root.
-- Read an existing file before attempting to overwrite it.
+- Read an existing file before attempting to edit it.
 - Preserve existing public interfaces unless the task explicitly requires changing them.
 - Prefer narrow file ranges and targeted search over reading entire large files.
+- Prefer replace_text for existing files. Use write_file for new files or only when a complete-file rewrite is genuinely necessary.
 {test_instruction}
 Allowed actions:
 {{"action": "list_files", "glob": "**/*.py", "limit": 200}}
 {{"action": "search_text", "query": "symbol_or_text", "glob": "**/*.py", "limit": 50}}
 {{"action": "read_file", "path": "src/example.py", "start_line": 1, "end_line": 200}}
+{{"action": "replace_text", "path": "src/example.py", "old_text": "exact text already read", "new_text": "replacement text", "expected_replacements": 1}}
 {{"action": "write_file", "path": "src/example.py", "content": "complete file content with escaped newlines"}}
 {test_action}{{"action": "finish", "reason": "implementation complete"}}
 
@@ -129,7 +131,7 @@ Choose the next action.
             if path and path not in state["files_read"]:
                 state["files_read"].append(path)
 
-        if action_name == "write_file" and observation.get("type") == "write_success":
+        if action_name in {"write_file", "replace_text"} and observation.get("type") == "write_success":
             path = action.get("path")
             if path and path not in state["files_written"]:
                 state["files_written"].append(path)

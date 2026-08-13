@@ -6,8 +6,10 @@ cd "$ROOT"
 
 MANIFEST="${1:-jobs/contextbench_smoke.jsonl}"
 REGISTRY="${MODEL_REGISTRY:-model_artifacts/registry.yml}"
-CORE_CONFIG="$ROOT/experiments/contextbench_core.yml"
-CORE_MANIFEST="$ROOT/jobs/contextbench_scaffold_boundaries_v1.jsonl"
+CORE_V1_CONFIG="$ROOT/experiments/contextbench_core.yml"
+CORE_V1_MANIFEST="$ROOT/jobs/contextbench_scaffold_boundaries_v1.jsonl"
+CORE_V2_CONFIG="$ROOT/experiments/contextbench_core_v2.yml"
+CORE_V2_MANIFEST="$ROOT/jobs/contextbench_scaffold_boundaries_v2.jsonl"
 RUNTIME_DIR="$ROOT/run/plato"
 LOG_DIR="${PLATO_LOG_DIR:-$ROOT/logs/plato}"
 TOKEN_FILE="$RUNTIME_DIR/scheduler.token"
@@ -39,9 +41,12 @@ if [[ ! -f "$MANIFEST" ]]; then
     echo "Missing manifest: $MANIFEST" >&2
     exit 1
 fi
-if [[ "$(readlink -f "$MANIFEST")" == "$CORE_MANIFEST" ]]; then
+if [[ "$(readlink -f "$MANIFEST")" == "$CORE_V1_MANIFEST" ]]; then
     .venv/bin/python scripts/launch_gate.py \
-        --config "$CORE_CONFIG"
+        --config "$CORE_V1_CONFIG"
+elif [[ "$(readlink -f "$MANIFEST")" == "$CORE_V2_MANIFEST" ]]; then
+    .venv/bin/python scripts/launch_gate.py \
+        --config "$CORE_V2_CONFIG"
 fi
 if [[ ! -f "$REGISTRY" ]]; then
     echo "Missing model registry: $REGISTRY" >&2
