@@ -40,6 +40,10 @@ The v2 experiment is `contextbench_scaffold_boundaries_v2` and keeps:
 It changes only the action execution protocol:
 
 - every model action has `max_tokens = 8192`;
+- thinking remains enabled, but llama.cpp's server-side
+  `reasoning_budget_tokens = 2048` forces the reasoning block to end while
+  reserving the remainder of the action budget for the schema-constrained JSON
+  result;
 - every model call has a 1,800-second deadline;
 - a server `finish_reason = length` is stored as the usable terminal outcome
   `model_output_limit`, rather than becoming a parse error or infrastructure

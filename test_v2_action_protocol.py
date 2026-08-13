@@ -46,12 +46,16 @@ def test_llama_cpp_action_call_freezes_schema_and_output_limit(monkeypatch):
     model = OpenAICompatibleModel(
         "model-a",
         backend_name="llama_cpp",
-        options={"num_predict": 8192},
+        options={
+            "num_predict": 8192,
+            "reasoning_budget_tokens": 2048,
+        },
         timeout=1800,
     )
 
     assert model.generate_action("choose one action", seed=11) == '{"action":"finish"}'
     assert captured["max_tokens"] == 8192
+    assert captured["reasoning_budget_tokens"] == 2048
     assert captured["response_format"] == {
         "type": "json_object",
         "schema": ACTION_RESPONSE_SCHEMA,

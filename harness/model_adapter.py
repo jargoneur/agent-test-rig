@@ -435,6 +435,8 @@ class OpenAICompatibleModel:
                 "repetition_penalty": "repeat_penalty",
                 "repeat_penalty": "repeat_penalty",
                 "chat_template_kwargs": "chat_template_kwargs",
+                "reasoning_budget_tokens": "reasoning_budget_tokens",
+                "reasoning_budget_message": "reasoning_budget_message",
             }
             for source, target in llama_cpp_map.items():
                 if source in options:

@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument("--reasoning-budget-tokens", type=int, default=64)
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--seed", type=int, default=20260813)
     parser.add_argument("--output")
@@ -32,6 +33,7 @@ def main() -> None:
         options={
             "do_sample": False,
             "num_predict": args.max_tokens,
+            "reasoning_budget_tokens": args.reasoning_budget_tokens,
             "chat_template_kwargs": {"enable_thinking": True},
         },
         timeout=args.timeout,
@@ -46,6 +48,7 @@ def main() -> None:
         "model": args.model,
         "base_url": args.base_url,
         "max_tokens": args.max_tokens,
+        "reasoning_budget_tokens": args.reasoning_budget_tokens,
         "timeout_seconds": args.timeout,
         "ok": False,
     }

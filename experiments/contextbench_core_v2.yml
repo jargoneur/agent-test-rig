@@ -24,11 +24,13 @@ wave_size: 25
 max_infrastructure_retries: 2
 generation_options:
   num_predict: 8192
+  reasoning_budget_tokens: 2048
 
 action_protocol:
   schema_constrained_json: true
   localized_edit_action: replace_text_v1
   output_limit_outcome: model_output_limit
+  bounded_thinking: reasoning_budget_tokens_v1
 
 design:
   paired_block: model_task_repeat

@@ -288,11 +288,21 @@ def main() -> None:
             "schema_constrained_json": True,
             "localized_edit_action": "replace_text_v1",
             "output_limit_outcome": "model_output_limit",
+            "bounded_thinking": "reasoning_budget_tokens_v1",
         }:
             errors.append("v2 action protocol is not the frozen supported protocol")
         output_limit = (config.get("generation_options") or {}).get("num_predict")
         if not isinstance(output_limit, int) or output_limit < 1:
             errors.append("v2 protocol requires a positive frozen num_predict")
+        reasoning_budget = (config.get("generation_options") or {}).get(
+            "reasoning_budget_tokens"
+        )
+        if (
+            not isinstance(reasoning_budget, int)
+            or reasoning_budget < 0
+            or reasoning_budget >= output_limit
+        ):
+            errors.append("v2 reasoning budget must be smaller than num_predict")
         timeout = config.get("model_timeout_seconds")
         if not isinstance(timeout, int) or timeout < 1:
             errors.append("v2 protocol requires a positive frozen model timeout")
